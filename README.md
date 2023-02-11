@@ -5,6 +5,7 @@ Triangulation code ripped from [ttf2mesh](https://github.com/fetisov/ttf2mesh) a
 ## Example
 
 ```rust
+use glam::Vec2;
 use ttf2mesh_triangulation::Triangulator;
 
 let mut triangulator = Triangulator::new();
