@@ -1,2 +1,2 @@
 mod triangulation;
-pub use triangulation::Outline;
+pub use triangulation::{Triangulator, TriangulatorError};

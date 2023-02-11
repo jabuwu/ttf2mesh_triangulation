@@ -4,6 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-byteorder = "1.4"
 glam = "0.22"
 snafu = "0.7"
