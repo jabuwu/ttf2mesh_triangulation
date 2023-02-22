@@ -1,2 +1,4 @@
 /target
 /Cargo.lock
+/src/test/test_data.bin
+/test_gen/build
