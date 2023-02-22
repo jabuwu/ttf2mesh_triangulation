@@ -51,7 +51,9 @@ fn test_data() {
                     points.push(Vec2::new(x, y));
                 }
 
-                outline.add_contour(contour_identifier as usize, points);
+                outline
+                    .add_contour(contour_identifier as usize, points)
+                    .unwrap();
             }
 
             let now = Instant::now();

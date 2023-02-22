@@ -16,7 +16,15 @@ impl Triangulator {
         Self::default()
     }
 
-    pub fn add_contour(&mut self, identifier: usize, points: Vec<Vec2>) {
+    pub fn add_contour(
+        &mut self,
+        identifier: usize,
+        points: Vec<Vec2>,
+    ) -> Result<(), TriangulatorError> {
+        if points.len() < 3 {
+            return Err(TriangulatorError::Incomplete);
+        }
+
         self.total_points += points.len();
         self.contours.push(Contour {
             identifier,
@@ -36,12 +44,18 @@ impl Triangulator {
             self.contours[contour_index].nested_to = nested_to;
             self.contours[contour_index].is_hole = is_hole;
         }
+
+        Ok(())
     }
 
     pub fn triangulate(&self) -> Result<Vec<[Vec2; 3]>, TriangulatorError> {
-        let mut mesher = Mesher::new(self);
-        mesher.process(128, true, true)?;
-        Ok(mesher.triangles())
+        if !self.contours.is_empty() {
+            let mut mesher = Mesher::new(self);
+            mesher.process(128, true, true)?;
+            Ok(mesher.triangles())
+        } else {
+            Err(TriangulatorError::Incomplete)
+        }
     }
 }
 
@@ -2027,4 +2041,5 @@ fn lines_has_common_point(l1p1: Vec2, l1p2: Vec2, l2p1: Vec2, l2p2: Vec2) -> boo
 #[derive(Debug, Snafu)]
 pub enum TriangulatorError {
     Fail,
+    Incomplete,
 }
