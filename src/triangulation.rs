@@ -1,9 +1,8 @@
 use std::{cmp::Ordering, mem::swap, pin::Pin, ptr::NonNull};
 
-use glam::Vec2;
 use snafu::Snafu;
 
-use crate::linked_list::LinkedListNode;
+use crate::{linked_list::LinkedListNode, vec2::Vec2};
 
 const EPSILON: f32 = 1e-7;
 
@@ -359,20 +358,6 @@ impl Default for Circumcircle {
             center: Vec2::ZERO,
         }
     }
-}
-
-macro_rules! vec_cross {
-    ($a:expr, $b:expr) => {
-        $a.x * $b.y - $a.y * $b.x
-    };
-}
-
-macro_rules! vec_proj {
-    ($res:expr, $vec:expr, $e1:expr, $e2:expr) => {{
-        let t = $vec.dot($e1);
-        $res[1] = $vec.dot($e2);
-        $res[0] = t;
-    }};
 }
 
 /* Cramer's rule for 2x2 system */
@@ -1023,7 +1008,7 @@ impl Mesher {
             d[0] = (*(*e1).v2).pos - (*(*e1).v1).pos;
             d[1] = (*(*e2).v2).pos - (*(*e2).v1).pos;
 
-            let cross = vec_cross!(d[0], d[1]);
+            let cross = d[0].cross(d[1]);
             if cross <= 0. {
                 return Some(NonNull::new(ret_default).unwrap());
             }
@@ -1055,7 +1040,7 @@ impl Mesher {
             let mut l2 = d[1].length();
             l1 = 1.0 / l1;
             l2 = 1.0 / l2;
-            let as_ = vec_cross!(d[0], d[1]) * l1 * l2;
+            let as_ = d[0].cross(d[1]) * l1 * l2;
             let ac = d[0].dot(d[1]) * l1 * l2;
             if as_ < 0. {
                 return Some(NonNull::new(ret_default).unwrap());
@@ -1679,7 +1664,7 @@ impl Mesher {
                 let v3 = (*(*t).edge[1]).common_vert((*t).edge[2]);
                 let d1 = (*v1).pos - (*v2).pos;
                 let d2 = (*v1).pos - (*v3).pos;
-                if vec_cross!(d1, d2) < 0. {
+                if d1.cross(d2) < 0. {
                     swap(&mut v1, &mut v2);
                 }
                 /*out->faces[out->nfaces].v1 = v1 - mesh->v;
@@ -1754,10 +1739,10 @@ fn is_convex_quad(
         v[1] = (*cc).pos - (*bb).pos;
         v[2] = (*dd).pos - (*cc).pos;
         v[3] = (*aa).pos - (*dd).pos;
-        z[0] = vec_cross!(v[0], v[1]);
-        z[1] = vec_cross!(v[1], v[2]);
-        z[2] = vec_cross!(v[2], v[3]);
-        z[3] = vec_cross!(v[3], v[0]);
+        z[0] = v[0].cross(v[1]);
+        z[1] = v[1].cross(v[2]);
+        z[2] = v[2].cross(v[3]);
+        z[3] = v[3].cross(v[0]);
         if z[0] * z[1] <= 0. {
             return false;
         };
@@ -1839,7 +1824,7 @@ fn lines_has_common_point(l1p1: Vec2, l1p2: Vec2, l2p1: Vec2, l2p2: Vec2) -> boo
         /*   vec e1      vec e2   */
         e1 = l1p1 - l2p1;
         e2 = l2p2 - l1p1;
-        if vec_cross!(e1, e2).abs() > EPSILON {
+        if e1.cross(e2).abs() > EPSILON {
             return false;
         }
         return e1.dot(e2) >= -EPSILON;
@@ -1857,8 +1842,8 @@ fn lines_has_common_point(l1p1: Vec2, l1p2: Vec2, l2p1: Vec2, l2p2: Vec2) -> boo
     let mut l2 = [Vec2::ZERO; 2];
     l2[0] = l2p1 - l1p1;
     l2[1] = l2p2 - l1p1;
-    vec_proj!(l2[0], l2[0], e1, e2);
-    vec_proj!(l2[1], l2[1], e1, e2);
+    l2[0] = l2[0].proj(e1, e2);
+    l2[1] = l2[1].proj(e1, e2);
 
     /* Проверим, имеет ли l2 общие точки c */
     /* единичным отрезком на оси OX */

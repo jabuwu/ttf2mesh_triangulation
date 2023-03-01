@@ -4,9 +4,8 @@ use std::{
 };
 
 use byteorder::{LittleEndian, ReadBytesExt};
-use glam::Vec2;
 
-use crate::Triangulator;
+use crate::{Triangulator, Vec2};
 
 #[test]
 fn test_data() {
