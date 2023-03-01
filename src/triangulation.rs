@@ -551,10 +551,15 @@ impl Mesher {
             }
             /* Byte-by-byte contour matching is done to combat repetition. */
             /* Designers sometimes allow. Example U+2592 in multiple fonts. */
-            /* TODO: bool duplicated = false;
-            for (int j = 0; j < i && !duplicated; j++)
+            let mut duplicated = false;
+            let mut j = 0;
+            while j < i && !duplicated {
                 duplicated = compare_contours(o, i, j);
-            if (duplicated) { continue; } */
+                j += 1;
+            }
+            if duplicated {
+                continue;
+            }
 
             /* Define the type of contour (normal or hole) and if hole, who is the parent */
             let nested_to = o.contours[i].nested_to;
@@ -2042,4 +2047,18 @@ fn lines_has_common_point(l1p1: Vec2, l1p2: Vec2, l2p1: Vec2, l2p2: Vec2) -> boo
 pub enum TriangulatorError {
     Fail,
     Incomplete,
+}
+
+fn compare_contours(o: &Triangulator, i1: usize, i2: usize) -> bool {
+    if o.contours[i1].points.len() != o.contours[i2].points.len() {
+        return false;
+    }
+    for i in 0..o.contours[i1].points.len() {
+        let dx = o.contours[i1].points[i].x - o.contours[i2].points[i].x;
+        let dy = o.contours[i1].points[i].y - o.contours[i2].points[i].y;
+        if dx.abs() > EPSILON || dy.abs() > EPSILON {
+            return false;
+        }
+    }
+    return true;
 }
