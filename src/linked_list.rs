@@ -1,13 +1,13 @@
 use std::ops::{Deref, DerefMut};
 
 #[derive(Clone, Copy)]
-pub(crate) struct LinkedList<T> {
-    next: *mut LinkedList<T>,
-    prev: *mut LinkedList<T>,
+pub(crate) struct LinkedListNode<T> {
+    next: *mut LinkedListNode<T>,
+    prev: *mut LinkedListNode<T>,
     data: T,
 }
 
-impl<T: Default> Default for LinkedList<T> {
+impl<T: Default> Default for LinkedListNode<T> {
     fn default() -> Self {
         Self {
             next: std::ptr::null_mut(),
@@ -17,50 +17,50 @@ impl<T: Default> Default for LinkedList<T> {
     }
 }
 
-impl<T> Deref for LinkedList<T> {
+impl<T> Deref for LinkedListNode<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.data
     }
 }
 
-impl<T> DerefMut for LinkedList<T> {
+impl<T> DerefMut for LinkedListNode<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.data
     }
 }
 
-impl<T> LinkedList<T> {
+impl<T> LinkedListNode<T> {
     pub fn init(&mut self) {
         self.next = self;
         self.prev = self;
     }
 
-    pub fn first(&self) -> *mut LinkedList<T> {
+    pub fn first(&self) -> *mut LinkedListNode<T> {
         self.next
     }
 
-    pub fn next(&self) -> *mut LinkedList<T> {
+    pub fn next(&self) -> *mut LinkedListNode<T> {
         self.next
     }
 
-    pub fn set_next(&mut self, next: *mut LinkedList<T>) {
+    pub fn set_next(&mut self, next: *mut LinkedListNode<T>) {
         self.next = next;
     }
 
-    pub fn prev(&self) -> *mut LinkedList<T> {
+    pub fn prev(&self) -> *mut LinkedListNode<T> {
         self.prev
     }
 
-    pub fn set_prev(&mut self, prev: *mut LinkedList<T>) {
+    pub fn set_prev(&mut self, prev: *mut LinkedListNode<T>) {
         self.prev = prev;
     }
 
     pub fn empty(&self) -> bool {
-        self.next == self as *const LinkedList<T> as *mut LinkedList<T>
+        self.next == self as *const LinkedListNode<T> as *mut LinkedListNode<T>
     }
 
-    pub fn insert_after(&mut self, after: *mut LinkedList<T>) {
+    pub fn insert_after(&mut self, after: *mut LinkedListNode<T>) {
         unsafe {
             self.prev = after;
             self.next = (*after).next;
@@ -69,7 +69,7 @@ impl<T> LinkedList<T> {
         }
     }
 
-    pub fn insert_last(&mut self, element: *mut LinkedList<T>) {
+    pub fn insert_last(&mut self, element: *mut LinkedListNode<T>) {
         unsafe {
             (*element).insert_after(self.prev);
         }
@@ -82,7 +82,7 @@ impl<T> LinkedList<T> {
         }
     }
 
-    pub fn attach(&mut self, element: *mut LinkedList<T>) {
+    pub fn attach(&mut self, element: *mut LinkedListNode<T>) {
         unsafe {
             (*element).prev = self;
             (*element).next = self.next;
@@ -91,7 +91,7 @@ impl<T> LinkedList<T> {
         }
     }
 
-    pub fn reattach(&mut self, element: *mut LinkedList<T>) {
+    pub fn reattach(&mut self, element: *mut LinkedListNode<T>) {
         unsafe {
             (*element).detach();
             self.attach(element);

@@ -3,7 +3,7 @@ use std::{cmp::Ordering, pin::Pin, ptr::NonNull};
 use glam::Vec2;
 use snafu::Snafu;
 
-use crate::linked_list::LinkedList;
+use crate::linked_list::LinkedListNode;
 
 const EPSILON: f32 = 1e-7;
 
@@ -198,18 +198,18 @@ fn ttf_outline_evenodd_base(
     counter
 }
 
-struct MVS {
+struct Vertex {
     pos: Vec2,
     contour: usize,
     is_hole: bool,
     nested_to: Option<usize>,
     object: usize,
-    edges: V2E,
-    next_in_contour: *mut MVS,
-    prev_in_contour: *mut MVS,
+    edges: VertexToEdgeNode,
+    next_in_contour: *mut Vertex,
+    prev_in_contour: *mut Vertex,
 }
 
-impl Default for MVS {
+impl Default for Vertex {
     fn default() -> Self {
         Self {
             pos: Vec2::ZERO,
@@ -217,7 +217,7 @@ impl Default for MVS {
             is_hole: false,
             nested_to: None,
             object: 0,
-            edges: V2E::default(),
+            edges: VertexToEdgeNode::default(),
             next_in_contour: std::ptr::null_mut(),
             prev_in_contour: std::ptr::null_mut(),
         }
@@ -225,50 +225,50 @@ impl Default for MVS {
 }
 
 #[derive(Clone, Copy)]
-struct MESData {
-    v1: *mut MVS,
-    v2: *mut MVS,
-    tr: [*mut MTS; 2],
-    alt_cc: [MCC; 2],
+struct Edge {
+    v1: *mut Vertex,
+    v2: *mut Vertex,
+    tr: [*mut TriangleNode; 2],
+    alt_cc: [Circumcircle; 2],
 }
 
-impl Default for MESData {
+impl Default for Edge {
     fn default() -> Self {
         Self {
             v1: std::ptr::null_mut(),
             v2: std::ptr::null_mut(),
             tr: [std::ptr::null_mut(); 2],
-            alt_cc: [MCC::default(); 2],
+            alt_cc: [Circumcircle::default(); 2],
         }
     }
 }
 
-type MES = LinkedList<MESData>;
+type EdgeNode = LinkedListNode<Edge>;
 
 #[derive(Clone, Copy)]
-struct MTSData {
-    edge: [*mut MES; 3],
-    cc: MCC,
+struct Triangle {
+    edge: [*mut EdgeNode; 3],
+    cc: Circumcircle,
     helper: i32,
 }
 
-impl Default for MTSData {
+impl Default for Triangle {
     fn default() -> Self {
         Self {
             edge: [std::ptr::null_mut(); 3],
-            cc: MCC::default(),
+            cc: Circumcircle::default(),
             helper: 0,
         }
     }
 }
 
-type MTS = LinkedList<MTSData>;
+type TriangleNode = LinkedListNode<Triangle>;
 
-struct V2EData {
-    edge: *mut MES,
+struct VertexToEdge {
+    edge: *mut EdgeNode,
 }
 
-impl Default for V2EData {
+impl Default for VertexToEdge {
     fn default() -> Self {
         Self {
             edge: std::ptr::null_mut(),
@@ -276,15 +276,15 @@ impl Default for V2EData {
     }
 }
 
-type V2E = LinkedList<V2EData>;
+type VertexToEdgeNode = LinkedListNode<VertexToEdge>;
 
 #[derive(Clone, Copy)]
-struct MCC {
+struct Circumcircle {
     radius: f32,
     center: Vec2,
 }
 
-impl Default for MCC {
+impl Default for Circumcircle {
     fn default() -> Self {
         Self {
             radius: 0.,
@@ -403,22 +403,22 @@ macro_rules! cramer2X2 {
 }
 
 struct Mesher {
-    nv: usize,             /* Actual number of vertices (may be less than maxv) */
-    v: Pin<Vec<MVS>>,      /* Vertex pool, length of maxv */
-    _e: Pin<Vec<MES>>,     /* Edge pool, length of maxe */
-    _t: Pin<Vec<MTS>>,     /* Triangle pool, length of maxt */
-    _l: Pin<Vec<V2E>>,     /* Vertex->edge pool, length of (2 * maxe) */
-    s: Pin<Vec<*mut MVS>>, /* Sorted by (y) array of vertices */
+    nv: usize,                      /* Actual number of vertices (may be less than maxv) */
+    v: Pin<Vec<Vertex>>,            /* Vertex pool, length of maxv */
+    _e: Pin<Vec<EdgeNode>>,         /* Edge pool, length of maxe */
+    _t: Pin<Vec<TriangleNode>>,     /* Triangle pool, length of maxt */
+    _l: Pin<Vec<VertexToEdgeNode>>, /* Vertex->edge pool, length of (2 * maxe) */
+    s: Pin<Vec<*mut Vertex>>,       /* Sorted by (y) array of vertices */
     pinned: Pin<Box<MesherPinned>>,
 }
 
 struct MesherPinned {
-    efree: MES,      /* Root of the list of free edges */
-    eused: MES,      /* Root of the list of edges used */
-    tfree: MTS,      /* Root of the list of free triangles */
-    tused: MTS,      /* Root of the list of triangles used */
-    lfree: V2E,      /* Root of free reference list vertex->edge */
-    vinit: [MVS; 2], /* Two initialisation points along the lower edge of the glyph */
+    efree: EdgeNode,         /* Root of the list of free edges */
+    eused: EdgeNode,         /* Root of the list of edges used */
+    tfree: TriangleNode,     /* Root of the list of free triangles */
+    tused: TriangleNode,     /* Root of the list of triangles used */
+    lfree: VertexToEdgeNode, /* Root of free reference list vertex->edge */
+    vinit: [Vertex; 2],      /* Two initialisation points along the lower edge of the glyph */
 }
 
 impl Mesher {
@@ -432,19 +432,19 @@ impl Mesher {
         let maxe = maxt * 2 + 1;
         let maxv2e = maxe * 2;
 
-        let mut v: Vec<MVS> = Vec::new();
+        let mut v: Vec<Vertex> = Vec::new();
         v.reserve(maxv);
 
-        let mut e: Vec<MES> = Vec::new();
+        let mut e: Vec<EdgeNode> = Vec::new();
         e.reserve(maxe);
 
-        let mut t: Vec<MTS> = Vec::new();
+        let mut t: Vec<TriangleNode> = Vec::new();
         t.reserve(maxt);
 
-        let mut l: Vec<V2E> = Vec::new();
+        let mut l: Vec<VertexToEdgeNode> = Vec::new();
         l.reserve(maxv2e);
 
-        let mut s: Vec<*mut MVS> = Vec::new();
+        let mut s: Vec<*mut Vertex> = Vec::new();
         s.reserve(maxv);
 
         /* Filling in the vertices according to outline points */
@@ -474,23 +474,23 @@ impl Mesher {
             let is_hole = o.contours[i].is_hole;
 
             for j in 0..len {
-                let vertex = MVS {
+                let vertex = Vertex {
                     pos: Vec2::new(pt[j].x, pt[j].y),
                     contour: i,
                     is_hole,
                     nested_to,
-                    edges: V2E::default(),
+                    edges: VertexToEdgeNode::default(),
                     prev_in_contour: unsafe {
-                        v.as_ptr().offset((base + (j + len - 1) % len) as isize) as *mut MVS
+                        v.as_ptr().offset((base + (j + len - 1) % len) as isize) as *mut Vertex
                     },
                     next_in_contour: unsafe {
-                        v.as_ptr().offset((base + (j + 1) % len) as isize) as *mut MVS
+                        v.as_ptr().offset((base + (j + 1) % len) as isize) as *mut Vertex
                     },
                     ..Default::default()
                 };
                 v.push(vertex);
                 let v_len = v.len();
-                s.push(&v[v_len - 1] as *const MVS as *mut MVS);
+                s.push(&v[v_len - 1] as *const Vertex as *mut Vertex);
                 v[v_len - 1].edges.init();
             }
         }
@@ -519,12 +519,12 @@ impl Mesher {
         });
 
         let mut pinned = Pin::new(Box::new(MesherPinned {
-            efree: MES::default(),
-            eused: MES::default(),
-            tfree: MTS::default(),
-            tused: MTS::default(),
-            lfree: V2E::default(),
-            vinit: [MVS::default(), MVS::default()],
+            efree: EdgeNode::default(),
+            eused: EdgeNode::default(),
+            tfree: TriangleNode::default(),
+            tused: TriangleNode::default(),
+            lfree: VertexToEdgeNode::default(),
+            vinit: [Vertex::default(), Vertex::default()],
         }));
 
         /* Initialize lists */
@@ -534,16 +534,16 @@ impl Mesher {
         pinned.tused.init();
         pinned.lfree.init();
         for i in 0..maxe {
-            e.push(MES::default());
-            l.push(V2E::default());
-            l.push(V2E::default());
+            e.push(EdgeNode::default());
+            l.push(VertexToEdgeNode::default());
+            l.push(VertexToEdgeNode::default());
 
             e[i].insert_after(pinned.efree.prev());
             l[i * 2 + 0].insert_after(pinned.lfree.prev());
             l[i * 2 + 1].insert_after(pinned.lfree.prev());
         }
         for i in 0..maxt {
-            t.push(MTS::default());
+            t.push(TriangleNode::default());
             t[i].insert_after(pinned.tfree.prev());
         }
 
@@ -648,8 +648,8 @@ impl Mesher {
             /* Trying to deal with duplicate points */
             let mut need_resorting = false;
             for i in 0..(self.nv - 1) {
-                let v1 = self.s[i] as *mut MVS;
-                let v2 = self.s[i + 1] as *mut MVS;
+                let v1 = self.s[i] as *mut Vertex;
+                let v2 = self.s[i + 1] as *mut Vertex;
                 let dx = (*v1).pos.x - (*v2).pos.x;
                 let dy = (*v1).pos.y - (*v2).pos.y;
                 if dx.abs() > EPSILON || dy.abs() > EPSILON {
@@ -713,7 +713,7 @@ impl Mesher {
                       C                A       C
             */
             for i in 0..self.nv {
-                let a = &self.v[i] as *const MVS as *mut MVS;
+                let a = &self.v[i] as *const Vertex as *mut Vertex;
                 let b = (*a).next_in_contour;
                 let c = (*b).next_in_contour;
                 let d = (*c).next_in_contour;
@@ -825,9 +825,9 @@ impl Mesher {
             /* STEP 1: Non-convex triangulation */
 
             /* Initialization */
-            let Some(curr) = self.create_edge(&self.pinned.vinit[0] as *const MVS as *mut MVS, &self.pinned.vinit[1] as *const MVS as *mut MVS) else { return Err(TriangulatorError::Fail) };
+            let Some(curr) = self.create_edge(&self.pinned.vinit[0] as *const Vertex as *mut Vertex, &self.pinned.vinit[1] as *const Vertex as *mut Vertex) else { return Err(TriangulatorError::Fail) };
             let mut curr = curr.as_ptr();
-            let mut convx = MES::default();
+            let mut convx = EdgeNode::default();
             convx.init();
             convx.reattach(curr);
 
@@ -909,7 +909,7 @@ impl Mesher {
                     }
                 }
 
-                while (*l).prev() != &convx as *const MES as *mut MES {
+                while (*l).prev() != &convx as *const EdgeNode as *mut EdgeNode {
                     let Some(tmp) = self.make_convex90((*l).prev(), l, l).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
                     if tmp == l {
                         break;
@@ -917,7 +917,7 @@ impl Mesher {
                     l = tmp;
                 }
 
-                while (*r).next() != &convx as *const MES as *mut MES {
+                while (*r).next() != &convx as *const EdgeNode as *mut EdgeNode {
                     let Some(tmp) = self.make_convex90(r, (*r).next(), r).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
                     if tmp == r {
                         break;
@@ -939,8 +939,8 @@ impl Mesher {
                 done = false;
                 let mut e1 = convx.next();
                 let mut e2 = (*e1).next();
-                while e1 != &convx as *const MES as *mut MES
-                    && e2 != &convx as *const MES as *mut MES
+                while e1 != &convx as *const EdgeNode as *mut EdgeNode
+                    && e2 != &convx as *const EdgeNode as *mut EdgeNode
                 {
                     let Some(e1_) = self.make_convex(e1, e2, e2).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
                     e1 = e1_;
@@ -961,7 +961,7 @@ impl Mesher {
         }
     }
 
-    fn create_edge(&mut self, v1: *mut MVS, v2: *mut MVS) -> Option<NonNull<MES>> {
+    fn create_edge(&mut self, v1: *mut Vertex, v2: *mut Vertex) -> Option<NonNull<EdgeNode>> {
         unsafe {
             if self.pinned.efree.empty() || self.pinned.lfree.empty() {
                 return None;
@@ -969,10 +969,10 @@ impl Mesher {
             let res = self.pinned.efree.first();
             (*res).detach();
             self.pinned.eused.attach(res);
-            (*res).v1 = v1 as *mut MVS;
-            (*res).v2 = v2 as *mut MVS;
-            (*res).alt_cc[0] = MCC::default();
-            (*res).alt_cc[1] = MCC::default();
+            (*res).v1 = v1 as *mut Vertex;
+            (*res).v2 = v2 as *mut Vertex;
+            (*res).alt_cc[0] = Circumcircle::default();
+            (*res).alt_cc[1] = Circumcircle::default();
             (*res).tr[0] = std::ptr::null_mut();
             (*res).tr[1] = std::ptr::null_mut();
             self.create_v2e_link(v1, res);
@@ -981,7 +981,11 @@ impl Mesher {
         }
     }
 
-    fn create_v2e_link(&mut self, v: *mut MVS, e: *const MES) -> Option<NonNull<V2E>> {
+    fn create_v2e_link(
+        &mut self,
+        v: *mut Vertex,
+        e: *const EdgeNode,
+    ) -> Option<NonNull<VertexToEdgeNode>> {
         unsafe {
             if self.pinned.lfree.empty() {
                 return None;
@@ -989,17 +993,17 @@ impl Mesher {
             let res = self.pinned.lfree.first();
             (*res).detach();
             (*v).edges.attach(res);
-            (*res).edge = e as *mut MES;
+            (*res).edge = e as *mut EdgeNode;
             Some(NonNull::new(res).unwrap())
         }
     }
 
     fn create_triangle(
         &mut self,
-        e1: *mut MES,
-        e2: *mut MES,
-        e3: *mut MES,
-    ) -> Option<NonNull<MTS>> {
+        e1: *mut EdgeNode,
+        e2: *mut EdgeNode,
+        e3: *mut EdgeNode,
+    ) -> Option<NonNull<TriangleNode>> {
         unsafe {
             if (*e1).tr[1] != std::ptr::null_mut()
                 || (*e2).tr[1] != std::ptr::null_mut()
@@ -1014,26 +1018,26 @@ impl Mesher {
             (*t).detach();
             self.pinned.tused.attach(t);
             (*t).helper = -1;
-            (*t).cc = MCC::default();
+            (*t).cc = Circumcircle::default();
             (*e1).tr[1] = (*e1).tr[0];
             (*e1).tr[0] = t;
             (*e2).tr[1] = (*e2).tr[0];
             (*e2).tr[0] = t;
             (*e3).tr[1] = (*e3).tr[0];
             (*e3).tr[0] = t;
-            (*t).edge[0] = e1 as *mut MES;
-            (*t).edge[1] = e2 as *mut MES;
-            (*t).edge[2] = e3 as *mut MES;
+            (*t).edge[0] = e1 as *mut EdgeNode;
+            (*t).edge[1] = e2 as *mut EdgeNode;
+            (*t).edge[2] = e3 as *mut EdgeNode;
             Some(NonNull::new(t).unwrap())
         }
     }
 
     fn make_convex(
         &mut self,
-        e1: *mut MES,
-        e2: *mut MES,
-        ret_default: *const MES,
-    ) -> Option<NonNull<MES>> {
+        e1: *mut EdgeNode,
+        e2: *mut EdgeNode,
+        ret_default: *const EdgeNode,
+    ) -> Option<NonNull<EdgeNode>> {
         unsafe {
             let mut d = [Vec2::ZERO; 2];
             d[0] = (*(*e1).v2).pos - (*(*e1).v1).pos;
@@ -1041,7 +1045,7 @@ impl Mesher {
 
             let cross = vec_cross!(d[0], d[1]);
             if cross <= 0. {
-                return Some(NonNull::new(ret_default as *mut MES).unwrap());
+                return Some(NonNull::new(ret_default as *mut EdgeNode).unwrap());
             }
 
             let Some(n) = self.create_edge((*e1).v1, (*e2).v2) else { return None };
@@ -1051,7 +1055,7 @@ impl Mesher {
             self.pinned.eused.reattach(e1);
             self.pinned.eused.reattach(e2);
             if self
-                .create_triangle(e1 as *mut MES, e2 as *mut MES, n)
+                .create_triangle(e1 as *mut EdgeNode, e2 as *mut EdgeNode, n)
                 .is_none()
             {
                 return None;
@@ -1062,10 +1066,10 @@ impl Mesher {
 
     fn make_convex90(
         &mut self,
-        e1: *mut MES,
-        e2: *mut MES,
-        ret_default: *const MES,
-    ) -> Option<NonNull<MES>> {
+        e1: *mut EdgeNode,
+        e2: *mut EdgeNode,
+        ret_default: *const EdgeNode,
+    ) -> Option<NonNull<EdgeNode>> {
         unsafe {
             let mut d = [Vec2::ZERO; 2];
             d[0] = (*(*e1).v2).pos - (*(*e1).v1).pos;
@@ -1077,10 +1081,10 @@ impl Mesher {
             let as_ = vec_cross!(d[0], d[1]) * l1 * l2;
             let ac = d[0].dot(d[1]) * l1 * l2;
             if as_ < 0. {
-                return Some(NonNull::new(ret_default as *mut MES).unwrap());
+                return Some(NonNull::new(ret_default as *mut EdgeNode).unwrap());
             }
             if ac > 0. {
-                return Some(NonNull::new(ret_default as *mut MES).unwrap());
+                return Some(NonNull::new(ret_default as *mut EdgeNode).unwrap());
             }
 
             let Some(n) = self.create_edge((*e1).v1, (*e2).v2).map(|nn| nn.as_ptr()) else { return None };
@@ -1089,7 +1093,7 @@ impl Mesher {
             self.pinned.eused.reattach(e1);
             self.pinned.eused.reattach(e2);
             if self
-                .create_triangle(e1 as *mut MES, e2 as *mut MES, n)
+                .create_triangle(e1 as *mut EdgeNode, e2 as *mut EdgeNode, n)
                 .is_none()
             {
                 return None;
@@ -1101,7 +1105,7 @@ impl Mesher {
     fn optimize_all(&mut self, deep: i32, object: usize) -> Result<(), TriangulatorError> {
         unsafe {
             let mut e = self.pinned.eused.next();
-            while e != &self.pinned.eused as *const MES as *mut MES {
+            while e != &self.pinned.eused as *const EdgeNode as *mut EdgeNode {
                 let opt = e;
                 e = (*e).next();
                 if (*(*opt).v1).object != object {
@@ -1113,7 +1117,7 @@ impl Mesher {
         }
     }
 
-    fn optimize(&mut self, e: *mut MES, mut deep: i32) -> Result<(), TriangulatorError> {
+    fn optimize(&mut self, e: *mut EdgeNode, mut deep: i32) -> Result<(), TriangulatorError> {
         unsafe {
             if deep <= 0 || (*e).tr[1] == std::ptr::null_mut() {
                 return Ok(());
@@ -1187,7 +1191,7 @@ impl Mesher {
         }
     }
 
-    fn flip_edge(&mut self, e: *mut MES) -> Result<(), TriangulatorError> {
+    fn flip_edge(&mut self, e: *mut EdgeNode) -> Result<(), TriangulatorError> {
         /*
             Делаем инваиантное преобразование
 
@@ -1204,10 +1208,10 @@ impl Mesher {
         unsafe {
             let mut t0 = (*e).tr[0];
             let mut t1 = (*e).tr[1];
-            let mut a = tri_second_edge!(t0, e as *mut MES);
-            let mut b = tri_third_edge!(t0, e as *mut MES);
-            let mut c = tri_second_edge!(t1, e as *mut MES);
-            let mut d = tri_third_edge!(t1, e as *mut MES);
+            let mut a = tri_second_edge!(t0, e as *mut EdgeNode);
+            let mut b = tri_third_edge!(t0, e as *mut EdgeNode);
+            let mut c = tri_second_edge!(t1, e as *mut EdgeNode);
+            let mut d = tri_third_edge!(t1, e as *mut EdgeNode);
             if !edge_has_vert!(a, (*e).v1) {
                 swap!(a, b);
             }
@@ -1223,9 +1227,9 @@ impl Mesher {
             self.free_triangle(t0, false);
             self.free_triangle(t1, false);
             self.change_edge(e, aa, bb);
-            let Some(t0_) = self.create_triangle(a, c, e as *mut MES).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+            let Some(t0_) = self.create_triangle(a, c, e as *mut EdgeNode).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
             t0 = t0_;
-            let Some(t1_) = self.create_triangle(b, d, e as *mut MES).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+            let Some(t1_) = self.create_triangle(b, d, e as *mut EdgeNode).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
             t1 = t1_;
 
             /* Восстанавливаем поля после пересоздания */
@@ -1233,33 +1237,33 @@ impl Mesher {
             (*t1).helper = t1copy.helper;
             (*t0).cc = ecopy.alt_cc[0];
             (*t1).cc = ecopy.alt_cc[1];
-            (*(e as *mut MES)).alt_cc[0] = t1copy.cc; /* flip copy! */
-            (*(e as *mut MES)).alt_cc[1] = t0copy.cc;
+            (*(e as *mut EdgeNode)).alt_cc[0] = t1copy.cc; /* flip copy! */
+            (*(e as *mut EdgeNode)).alt_cc[1] = t0copy.cc;
 
             Ok(())
         }
     }
 
-    fn free_triangle(&mut self, t: *mut MTS, and_bare_edges: bool) {
+    fn free_triangle(&mut self, t: *mut TriangleNode, and_bare_edges: bool) {
         unsafe {
-            if (*(*t).edge[0]).tr[0] == t as *mut MTS {
+            if (*(*t).edge[0]).tr[0] == t as *mut TriangleNode {
                 (*(*t).edge[0]).tr[0] = (*(*t).edge[0]).tr[1];
             }
-            if (*(*t).edge[1]).tr[0] == t as *mut MTS {
+            if (*(*t).edge[1]).tr[0] == t as *mut TriangleNode {
                 (*(*t).edge[1]).tr[0] = (*(*t).edge[1]).tr[1];
             }
-            if (*(*t).edge[2]).tr[0] == t as *mut MTS {
+            if (*(*t).edge[2]).tr[0] == t as *mut TriangleNode {
                 (*(*t).edge[2]).tr[0] = (*(*t).edge[2]).tr[1];
             }
             (*(*t).edge[0]).tr[1] = std::ptr::null_mut();
             (*(*t).edge[1]).tr[1] = std::ptr::null_mut();
             (*(*t).edge[2]).tr[1] = std::ptr::null_mut();
-            (*(*t).edge[0]).alt_cc[0] = MCC::default();
-            (*(*t).edge[0]).alt_cc[1] = MCC::default();
-            (*(*t).edge[1]).alt_cc[0] = MCC::default();
-            (*(*t).edge[1]).alt_cc[1] = MCC::default();
-            (*(*t).edge[2]).alt_cc[0] = MCC::default();
-            (*(*t).edge[2]).alt_cc[1] = MCC::default();
+            (*(*t).edge[0]).alt_cc[0] = Circumcircle::default();
+            (*(*t).edge[0]).alt_cc[1] = Circumcircle::default();
+            (*(*t).edge[1]).alt_cc[0] = Circumcircle::default();
+            (*(*t).edge[1]).alt_cc[1] = Circumcircle::default();
+            (*(*t).edge[2]).alt_cc[0] = Circumcircle::default();
+            (*(*t).edge[2]).alt_cc[1] = Circumcircle::default();
             if and_bare_edges && (*(*t).edge[0]).tr[0] == std::ptr::null_mut() {
                 self.free_edge((*t).edge[0]);
             }
@@ -1274,14 +1278,14 @@ impl Mesher {
         }
     }
 
-    fn free_edge(&mut self, e: *mut MES) -> bool {
+    fn free_edge(&mut self, e: *mut EdgeNode) -> bool {
         unsafe {
             if (*e).tr[0] != std::ptr::null_mut() {
                 return false;
             }
             let mut l = (*(*e).v1).edges.next();
             while l != &mut (*(*e).v1).edges {
-                if (*l).edge == e as *mut MES {
+                if (*l).edge == e as *mut EdgeNode {
                     (*l).detach();
                     self.pinned.lfree.attach(l);
                     break;
@@ -1290,7 +1294,7 @@ impl Mesher {
             }
             let mut l = (*(*e).v2).edges.next();
             while l != &mut (*(*e).v2).edges {
-                if (*l).edge == e as *mut MES {
+                if (*l).edge == e as *mut EdgeNode {
                     (*l).detach();
                     self.pinned.lfree.attach(l);
                     break;
@@ -1303,10 +1307,10 @@ impl Mesher {
         }
     }
 
-    fn change_edge(&mut self, e: *mut MES, v1: *mut MVS, v2: *mut MVS) {
+    fn change_edge(&mut self, e: *mut EdgeNode, v1: *mut Vertex, v2: *mut Vertex) {
         unsafe {
             let prev = (*e).prev();
-            self.free_edge(e as *mut MES);
+            self.free_edge(e as *mut EdgeNode);
             self.create_edge(v1, v2);
             (*e).detach();
             (*e).insert_after(prev);
@@ -1322,18 +1326,26 @@ impl Mesher {
                 continue;
             }
             self.insert_fixed_edge(
-                &self.v[i] as *const MVS as *mut MVS,
+                &self.v[i] as *const Vertex as *mut Vertex,
                 self.v[i].prev_in_contour,
             )?;
         }
         Ok(())
     }
 
-    fn insert_fixed_edge(&mut self, v1: *mut MVS, v2: *mut MVS) -> Result<(), TriangulatorError> {
+    fn insert_fixed_edge(
+        &mut self,
+        v1: *mut Vertex,
+        v2: *mut Vertex,
+    ) -> Result<(), TriangulatorError> {
         unsafe {
-            let mut track = MES::default();
+            let mut track = EdgeNode::default();
             track.init();
-            self.find_triangles_track(v1 as *mut MVS, v2, &track as *const MES as *mut MES)?;
+            self.find_triangles_track(
+                v1 as *mut Vertex,
+                v2,
+                &track as *const EdgeNode as *mut EdgeNode,
+            )?;
 
             /* Формируем два контура из рёбер, описывающих образовавшуюся после удаления */
             /* треугольников пустоту (с одной и с другой стороны от вставляемого ребра v1->v2) */
@@ -1408,11 +1420,11 @@ impl Mesher {
             let mut v = v1;
             let mut e = cntr1;
             loop {
-                if !edge_has_vert!(e, v as *mut MVS) {
+                if !edge_has_vert!(e, v as *mut Vertex) {
                     return Err(TriangulatorError::Fail);
                 }
-                v = edge_second_vert!(e, v as *mut MVS);
-                if (*e).next() != cntr1 as *mut MES {
+                v = edge_second_vert!(e, v as *mut Vertex);
+                if (*e).next() != cntr1 as *mut EdgeNode {
                     e = (*e).next();
                     continue;
                 }
@@ -1424,11 +1436,11 @@ impl Mesher {
             v = v1;
             let mut e = cntr2;
             loop {
-                if !edge_has_vert!(e, v as *mut MVS) {
+                if !edge_has_vert!(e, v as *mut Vertex) {
                     return Err(TriangulatorError::Fail);
                 }
-                v = edge_second_vert!(e, v as *mut MVS);
-                if (*e).next() != cntr2 as *mut MES {
+                v = edge_second_vert!(e, v as *mut Vertex);
+                if (*e).next() != cntr2 as *mut EdgeNode {
                     e = (*e).next();
                     continue;
                 }
@@ -1444,8 +1456,8 @@ impl Mesher {
             /* Триангулируем получившуюся после удаления дыру рекурсивным */
             /* алгоритмом. В процессе работы он вернёт все грани списков */
             /* cntr1 и cntr2 обратно мешеру (в список eused) */
-            self.triangulate_hole(cntr1 as *mut MES, ins)?;
-            self.triangulate_hole(cntr2 as *mut MES, ins)?;
+            self.triangulate_hole(cntr1 as *mut EdgeNode, ins)?;
+            self.triangulate_hole(cntr2 as *mut EdgeNode, ins)?;
 
             Ok(())
         }
@@ -1453,8 +1465,8 @@ impl Mesher {
 
     fn triangulate_hole(
         &mut self,
-        cntr: *mut MES,
-        base: *mut MES,
+        cntr: *mut EdgeNode,
+        base: *mut EdgeNode,
     ) -> Result<(), TriangulatorError> {
         unsafe {
             if (*cntr).next() == cntr {
@@ -1473,8 +1485,8 @@ impl Mesher {
 
             /* Ищем самую близкую точку из контура к ребру base */
 
-            let mut closest_edge: *mut MES = std::ptr::null_mut();
-            let mut closest_vert: *mut MVS = std::ptr::null_mut();
+            let mut closest_edge: *mut EdgeNode = std::ptr::null_mut();
+            let mut closest_vert: *mut Vertex = std::ptr::null_mut();
             let mut closest_proj = 0.; /* Дальность не нормированная */
 
             let base_dir = (*(*base).v2).pos - (*(*base).v1).pos;
@@ -1522,7 +1534,7 @@ impl Mesher {
             if l == std::ptr::null_mut() || r == std::ptr::null_mut() {
                 return Err(TriangulatorError::Fail);
             }
-            let Some(_t) = self.create_triangle(base, l as *mut MES, r as *mut MES).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+            let Some(_t) = self.create_triangle(base, l as *mut EdgeNode, r as *mut EdgeNode).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
 
             /* Запускаем функцию рекурсивно с базовым ребром L и R */
             /* Сначала размыкаем контур, формируя из него 2 других */
@@ -1535,8 +1547,8 @@ impl Mesher {
             (*new_cntr2_beg).set_prev(new_cntr2_end);
             (*new_cntr2_end).set_next(new_cntr2_beg);
 
-            self.triangulate_hole(new_cntr1_beg, l as *mut MES)?;
-            self.triangulate_hole(new_cntr2_beg, r as *mut MES)?;
+            self.triangulate_hole(new_cntr1_beg, l as *mut EdgeNode)?;
+            self.triangulate_hole(new_cntr2_beg, r as *mut EdgeNode)?;
 
             Ok(())
         }
@@ -1544,13 +1556,13 @@ impl Mesher {
 
     fn find_triangles_track(
         &mut self,
-        v1: *mut MVS,
-        v2: *const MVS,
-        root: *mut MES,
+        v1: *mut Vertex,
+        v2: *const Vertex,
+        root: *mut EdgeNode,
     ) -> Result<(), TriangulatorError> {
         unsafe {
-            let mut tcurr: *mut MTS = std::ptr::null_mut();
-            let mut ecurr: *mut MES = std::ptr::null_mut();
+            let mut tcurr: *mut TriangleNode = std::ptr::null_mut();
+            let mut ecurr: *mut EdgeNode = std::ptr::null_mut();
 
             /* Find the triangle and its edge opposite v1, which intersects the segment v1-v2 */
             let mut v2l = (*v1).edges.next();
@@ -1594,7 +1606,7 @@ impl Mesher {
                     return Err(TriangulatorError::Fail);
                 }
                 (*tcurr).helper = -2;
-                if opposite_vert!(tcurr, ecurr) == v2 as *mut MVS {
+                if opposite_vert!(tcurr, ecurr) == v2 as *mut Vertex {
                     break;
                 }
                 let e1 = tri_second_edge!(tcurr, ecurr);
@@ -1623,7 +1635,7 @@ impl Mesher {
             /* If the separating edge lies on the contour, then invert the sign when */
             /* crossing over it. Then remove all negative triangles. */
 
-            let mut root = MTS::default(); /* The root of the list to be generated */
+            let mut root = TriangleNode::default(); /* The root of the list to be generated */
             root.init();
 
             /* Add the first triangle with a negative sign (helper=0) */
@@ -1683,7 +1695,7 @@ impl Mesher {
             vert.push(self.v[i].pos);
         }
         let mut t = self.pinned.tused.next();
-        while t != &self.pinned.tused as *const MTS as *mut MTS {
+        while t != &self.pinned.tused as *const TriangleNode as *mut TriangleNode {
             unsafe {
                 //mvs_t *v1, *v2, *v3;
                 //float d1[2], d2[2];
@@ -1714,10 +1726,10 @@ impl Mesher {
 }
 
 fn lines_cross_args(
-    a1: &MVS,
-    a2: &MVS,
-    b1: &MVS,
-    b2: &MVS,
+    a1: &Vertex,
+    a2: &Vertex,
+    b1: &Vertex,
+    b2: &Vertex,
     aarg: &mut f32,
     barg: &mut f32,
 ) -> bool {
@@ -1759,7 +1771,12 @@ fn lines_cross_args(
     return true;
 }
 
-fn is_convex_quad(aa: *const MVS, bb: *const MVS, cc: *const MVS, dd: *const MVS) -> bool {
+fn is_convex_quad(
+    aa: *const Vertex,
+    bb: *const Vertex,
+    cc: *const Vertex,
+    dd: *const Vertex,
+) -> bool {
     unsafe {
         let mut v = [Vec2::ZERO; 4];
         let mut z = [0.; 4];
@@ -1787,7 +1804,7 @@ fn is_convex_quad(aa: *const MVS, bb: *const MVS, cc: *const MVS, dd: *const MVS
     }
 }
 
-fn calc_circumcircle(aa: Vec2, bb: Vec2, cc: Vec2, mcc: &mut MCC) -> bool {
+fn calc_circumcircle(aa: Vec2, bb: Vec2, cc: Vec2, mcc: &mut Circumcircle) -> bool {
     /*
       { (o[0] - A[0])^2 + (o[1] - A[1])^2 = r^2
       { (o[0] - B[0])^2 + (o[1] - B[1])^2 = r^2
@@ -1825,12 +1842,12 @@ fn calc_circumcircle(aa: Vec2, bb: Vec2, cc: Vec2, mcc: &mut MCC) -> bool {
     return true;
 }
 
-fn find_edge(v1: *const MVS, v2: *const MVS) -> *mut MES {
+fn find_edge(v1: *const Vertex, v2: *const Vertex) -> *mut EdgeNode {
     unsafe {
         let mut v2l = (*v1).edges.next();
-        while v2l != &mut (*(v1 as *mut MVS)).edges {
-            if edge_has_vert!((*v2l).edge, v1 as *mut MVS)
-                && edge_has_vert!((*v2l).edge, v2 as *mut MVS)
+        while v2l != &mut (*(v1 as *mut Vertex)).edges {
+            if edge_has_vert!((*v2l).edge, v1 as *mut Vertex)
+                && edge_has_vert!((*v2l).edge, v2 as *mut Vertex)
             {
                 return (*v2l).edge;
             }
