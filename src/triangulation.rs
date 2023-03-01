@@ -196,18 +196,6 @@ fn ttf_outline_evenodd_base(
     counter
 }
 
-macro_rules! maxv_to_maxt {
-    ($maxv:expr) => {
-        (($maxv - 3) * 2 + 1)
-    };
-}
-
-macro_rules! maxt_to_maxe {
-    ($maxt:expr) => {
-        ($maxt * 2 + 1)
-    };
-}
-
 struct MVS {
     pos: Vec2,
     contour: usize,
@@ -366,12 +354,6 @@ macro_rules! list_insert_last {
     };
 }
 
-macro_rules! to_mut_ptr {
-    ($expr:expr, $type:ty) => {
-        ($expr as *const $type as *mut $type)
-    };
-}
-
 macro_rules! force_borrow {
     ($expr:expr, $type:ty) => {
         &mut *($expr as *const $type as *mut $type)
@@ -509,7 +491,6 @@ struct MesherPinned {
     tfree: MTS,      /* Root of the list of free triangles */
     tused: MTS,      /* Root of the list of triangles used */
     lfree: V2E,      /* Root of free reference list vertex->edge */
-    convx: MES,      /* Root of the edge list in the convex shell */
     vinit: [MVS; 2], /* Two initialisation points along the lower edge of the glyph */
 }
 
@@ -520,8 +501,8 @@ impl Mesher {
         /* Allocate memory and initialize fields */
 
         let maxv = o.total_points;
-        let maxt = maxv_to_maxt!(maxv + 2); /* Two vertex - initialization */
-        let maxe = maxt_to_maxe!(maxt);
+        let maxt = ((maxv + 2) - 3) * 2 + 1;
+        let maxe = maxt * 2 + 1;
         let maxv2e = maxe * 2;
 
         let mut v: Vec<MVS> = Vec::new();
@@ -572,23 +553,18 @@ impl Mesher {
                     is_hole,
                     nested_to,
                     edges: V2E::default(),
-                    // TODO: determine these values here
-                    prev_in_contour: std::ptr::null_mut(),
-                    next_in_contour: std::ptr::null_mut(),
+                    prev_in_contour: unsafe {
+                        v.as_ptr().offset((base + (j + len - 1) % len) as isize) as *mut MVS
+                    },
+                    next_in_contour: unsafe {
+                        v.as_ptr().offset((base + (j + 1) % len) as isize) as *mut MVS
+                    },
                     ..Default::default()
                 };
                 v.push(vertex);
                 let v_len = v.len();
                 s.push(&v[v_len - 1]);
                 list_init!(&mut v[v_len - 1].edges);
-            }
-            for index in 0..len {
-                let next_index = (index + 1) % len;
-                let prev_index = (index + len - 1) % len;
-                let next_ptr = to_mut_ptr!(&v[base + next_index], MVS);
-                let prev_ptr = to_mut_ptr!(&v[base + prev_index], MVS);
-                v[base + index].next_in_contour = next_ptr;
-                v[base + index].prev_in_contour = prev_ptr;
             }
         }
 
@@ -621,7 +597,6 @@ impl Mesher {
             tfree: MTS::default(),
             tused: MTS::default(),
             lfree: V2E::default(),
-            convx: MES::default(),
             vinit: [MVS::default(), MVS::default()],
         }));
 
@@ -631,7 +606,6 @@ impl Mesher {
         list_init!(&mut pinned.tfree);
         list_init!(&mut pinned.tused);
         list_init!(&mut pinned.lfree);
-        list_init!(&mut pinned.convx);
         for i in 0..maxe {
             e.push(MES::default());
             l.push(V2E::default());
@@ -931,8 +905,9 @@ impl Mesher {
             /* Initialization */
             let Some(curr) = self.create_edge(&self.pinned.vinit[0], &self.pinned.vinit[1]) else { return Err(TriangulatorError::Fail) };
             let mut curr = curr.as_ptr();
-            list_init!(&mut force_pinned_borrow!(&self.pinned).convx);
-            list_reattach!(&mut force_pinned_borrow!(&self.pinned).convx, curr);
+            let mut convx = MES::default();
+            list_init!(&mut convx);
+            list_reattach!(&mut convx, curr);
 
             /* Cycle through all vertices of the selected contour */
             for i in 0..self.nv {
@@ -1012,7 +987,7 @@ impl Mesher {
                     }
                 }
 
-                while (*l).prev != &self.pinned.convx as *const MES as *mut MES {
+                while (*l).prev != &convx as *const MES as *mut MES {
                     let Some(tmp) = self.make_convex90((*l).prev, l, l).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
                     if tmp == l {
                         break;
@@ -1020,7 +995,7 @@ impl Mesher {
                     l = tmp;
                 }
 
-                while (*r).next != &self.pinned.convx as *const MES as *mut MES {
+                while (*r).next != &convx as *const MES as *mut MES {
                     let Some(tmp) = self.make_convex90(r, (*r).next, r).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
                     if tmp == r {
                         break;
@@ -1040,10 +1015,10 @@ impl Mesher {
             let mut done = true;
             while done {
                 done = false;
-                let mut e1 = self.pinned.convx.next;
+                let mut e1 = convx.next;
                 let mut e2 = (*e1).next;
-                while e1 != &self.pinned.convx as *const MES as *mut MES
-                    && e2 != &self.pinned.convx as *const MES as *mut MES
+                while e1 != &convx as *const MES as *mut MES
+                    && e2 != &convx as *const MES as *mut MES
                 {
                     let Some(e1_) = self.make_convex(e1, e2, e2).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
                     e1 = e1_;
@@ -1054,8 +1029,8 @@ impl Mesher {
                 }
             }
 
-            while !list_empty!(&mut force_pinned_borrow!(&self.pinned).convx) {
-                let e = self.pinned.convx.next;
+            while !list_empty!(force_borrow!(&convx, MES)) {
+                let e = convx.next;
                 list_detach!(e);
                 list_attach!(&mut force_pinned_borrow!(&self.pinned).eused, e);
             }
