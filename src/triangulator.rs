@@ -2,7 +2,7 @@ use std::mem::transmute;
 
 use snafu::Snafu;
 
-use crate::{triangulation::Mesher, vec2::Vec2, EPSILON};
+use crate::{mesher::Mesher, vec2::Vec2, EPSILON};
 
 #[derive(Default)]
 pub struct Triangulator {

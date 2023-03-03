@@ -2,7 +2,7 @@ pub(crate) const EPSILON: f32 = 1e-7;
 
 #[macro_use]
 mod linked_list;
-mod triangulation;
+mod mesher;
 mod triangulator;
 mod vec2;
 
