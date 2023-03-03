@@ -5,7 +5,7 @@ use std::{
 
 use byteorder::{LittleEndian, ReadBytesExt};
 
-use crate::{Triangulator, Vec2};
+use crate::Triangulator;
 
 #[test]
 fn test_data() {
@@ -47,7 +47,7 @@ fn test_data() {
                 for _ in 0..contour_length {
                     let x = cursor.read_f32::<LittleEndian>().unwrap();
                     let y = cursor.read_f32::<LittleEndian>().unwrap();
-                    points.push(Vec2::new(x, y));
+                    points.push([x, y]);
                 }
 
                 outline
@@ -69,12 +69,12 @@ fn test_data() {
                 let v3x = cursor.read_f32::<LittleEndian>().unwrap();
                 let v3y = cursor.read_f32::<LittleEndian>().unwrap();
 
-                assert_eq!(triangles[t][0].x, v1x);
-                assert_eq!(triangles[t][0].y, v1y);
-                assert_eq!(triangles[t][1].x, v2x);
-                assert_eq!(triangles[t][1].y, v2y);
-                assert_eq!(triangles[t][2].x, v3x);
-                assert_eq!(triangles[t][2].y, v3y);
+                assert_eq!(triangles[t][0][0], v1x);
+                assert_eq!(triangles[t][0][1], v1y);
+                assert_eq!(triangles[t][1][0], v2x);
+                assert_eq!(triangles[t][1][1], v2y);
+                assert_eq!(triangles[t][2][0], v3x);
+                assert_eq!(triangles[t][2][1], v3y);
             }
 
             count += 1;

@@ -1,9 +1,10 @@
 use std::ops::{Add, Index, IndexMut, Mul, Sub};
 
+#[repr(C)]
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
-pub struct Vec2 {
-    pub x: f32,
-    pub y: f32,
+pub(crate) struct Vec2 {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
 }
 
 impl Vec2 {

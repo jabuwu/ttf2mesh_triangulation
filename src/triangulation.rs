@@ -1,4 +1,9 @@
-use std::{cmp::Ordering, mem::swap, pin::Pin, ptr::NonNull};
+use std::{
+    cmp::Ordering,
+    mem::{swap, transmute},
+    pin::Pin,
+    ptr::NonNull,
+};
 
 use snafu::Snafu;
 
@@ -20,7 +25,7 @@ impl Triangulator {
     pub fn add_contour(
         &mut self,
         identifier: usize,
-        points: Vec<Vec2>,
+        points: Vec<[f32; 2]>,
     ) -> Result<(), TriangulatorError> {
         if points.len() < 3 {
             return Err(TriangulatorError::Incomplete);
@@ -29,7 +34,7 @@ impl Triangulator {
         self.total_points += points.len();
         self.contours.push(Contour {
             identifier,
-            points,
+            points: unsafe { transmute(points) },
             is_hole: false,
             nested_to: None,
         });
@@ -49,11 +54,11 @@ impl Triangulator {
         Ok(())
     }
 
-    pub fn triangulate(&self) -> Result<Vec<[Vec2; 3]>, TriangulatorError> {
+    pub fn triangulate(&self) -> Result<Vec<[[f32; 2]; 3]>, TriangulatorError> {
         if !self.contours.is_empty() {
             let mut mesher = Mesher::new(self);
             mesher.process(128, true, true)?;
-            Ok(mesher.triangles())
+            Ok(unsafe { transmute(mesher.triangles()) })
         } else {
             Err(TriangulatorError::Incomplete)
         }
