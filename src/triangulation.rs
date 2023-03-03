@@ -1826,7 +1826,7 @@ fn lines_has_common_point(l1p1: Vec2, l1p2: Vec2, l2p1: Vec2, l2p2: Vec2) -> boo
     let mut e2 = Vec2::ZERO;
     let mut len = e1.length_squared();
 
-    /* l1 - is it a point? */
+    // l1 - is it a point?
     if len < EPSILON {
         // ---------->x--------->
         //   vec e1      vec e2
