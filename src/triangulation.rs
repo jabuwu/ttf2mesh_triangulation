@@ -168,21 +168,18 @@ fn ttf_outline_evenodd_base(
 
         if point.y <= u.y && point.y > b.y {
             if point.x >= u.x || point.x >= b.x {
-                /*
-                           u
-                     edge /
-                         / <-- dx --> .
-                        /            point
-                       b
-
-                calculation of distance from edge to point:
-                y(x) = b.y + (u.y - b.y) / (u.x - b.x) * (x - b.x)    - the edge line equation
-                x(y) = (y - b.y) / (u.y - b.y) * (u.x - b.x) + b.x    - inverse equation of line
-                dx = point.x - x(point.y)                             - final equation for distance
-                */
+                //            u
+                //      edge /
+                //          / <-- dx --> .
+                //         /            point
+                //        b
+                // calculation of distance from edge to point:
+                // y(x) = b.y + (u.y - b.y) / (u.x - b.x) * (x - b.x)    - the edge line equation
+                // x(y) = (y - b.y) / (u.y - b.y) * (u.x - b.x) + b.x    - inverse equation of line
+                // dx = point.x - x(point.y)                             - final equation for distance
                 let dy = u.y - b.y;
                 if dy.abs() > EPSILON
-                /* horizontal edges are not handling */
+                // horizontal edges are not handling
                 {
                     let dx = point.x - (point.y - b.y) / dy * (u.x - b.x) - b.x;
                     if dx >= 0. {
@@ -365,7 +362,7 @@ impl Default for Circumcircle {
     }
 }
 
-/* Cramer's rule for 2x2 system */
+/// Cramer's rule for 2x2 system
 macro_rules! cramer2X2 {
     ($x:expr, $y:expr, $a11:expr, $a12:expr, $c1:expr, $a21:expr, $a22:expr, $c2:expr) => {{
         let det = ($a11) * ($a22) - ($a12) * ($a21);
@@ -375,29 +372,39 @@ macro_rules! cramer2X2 {
 }
 
 struct Mesher {
-    nv: usize,                      /* Actual number of vertices (may be less than maxv) */
-    v: Pin<Vec<Vertex>>,            /* Vertex pool, length of maxv */
-    _e: Pin<Vec<EdgeNode>>,         /* Edge pool, length of maxe */
-    _t: Pin<Vec<TriangleNode>>,     /* Triangle pool, length of maxt */
-    _l: Pin<Vec<VertexToEdgeNode>>, /* Vertex->edge pool, length of (2 * maxe) */
-    s: Pin<Vec<*mut Vertex>>,       /* Sorted by (y) array of vertices */
+    /// Actual number of vertices (may be less than maxv)
+    nv: usize,
+    /// Vertex pool, length of maxv
+    v: Pin<Vec<Vertex>>,
+    /// Edge pool, length of maxe
+    _e: Pin<Vec<EdgeNode>>,
+    /// Triangle pool, length of maxt
+    _t: Pin<Vec<TriangleNode>>,
+    /// Vertex->edge pool, length of (2 * maxe)
+    _l: Pin<Vec<VertexToEdgeNode>>,
+    /// Sorted by (y) array of vertices
+    s: Pin<Vec<*mut Vertex>>,
     pinned: Pin<Box<MesherPinned>>,
 }
 
 struct MesherPinned {
-    efree: EdgeNode,         /* Root of the list of free edges */
-    eused: EdgeNode,         /* Root of the list of edges used */
-    tfree: TriangleNode,     /* Root of the list of free triangles */
-    tused: TriangleNode,     /* Root of the list of triangles used */
-    lfree: VertexToEdgeNode, /* Root of free reference list vertex->edge */
-    vinit: [Vertex; 2],      /* Two initialisation points along the lower edge of the glyph */
+    /// Root of the list of free edges
+    efree: EdgeNode,
+    /// Root of the list of edges used
+    eused: EdgeNode,
+    /// Root of the list of free triangles
+    tfree: TriangleNode,
+    /// Root of the list of triangles used
+    tused: TriangleNode,
+    /// Root of free reference list vertex->edge
+    lfree: VertexToEdgeNode,
+    /// Two initialisation points along the lower edge of the glyph
+    vinit: [Vertex; 2],
 }
 
 impl Mesher {
     fn new(o: &Triangulator) -> Self {
-        // TODO: error on bad contours / no contours
-
-        /* Allocate memory and initialize fields */
+        // Allocate memory and initialize fields
 
         let maxv = o.total_points;
         let maxt = ((maxv + 2) - 3) * 2 + 1;
@@ -419,9 +426,7 @@ impl Mesher {
         let mut s: Vec<*mut Vertex> = Vec::new();
         s.reserve(maxv);
 
-        /* Filling in the vertices according to outline points */
-        //mvs_t *v = m->v;
-        //mvs_t **s = m->s;
+        // Filling in the vertices according to outline points
         for i in 0..o.contours.len() {
             let pt = &o.contours[i].points;
             let len = pt.len();
@@ -429,8 +434,8 @@ impl Mesher {
             if len < 3 {
                 continue;
             }
-            /* Byte-by-byte contour matching is done to combat repetition. */
-            /* Designers sometimes allow. Example U+2592 in multiple fonts. */
+            // Byte-by-byte contour matching is done to combat repetition.
+            // Designers sometimes allow. Example U+2592 in multiple fonts.
             let mut duplicated = false;
             let mut j = 0;
             while j < i && !duplicated {
@@ -441,7 +446,7 @@ impl Mesher {
                 continue;
             }
 
-            /* Define the type of contour (normal or hole) and if hole, who is the parent */
+            // Define the type of contour (normal or hole) and if hole, who is the parent
             let nested_to = o.contours[i].nested_to;
             let is_hole = o.contours[i].is_hole;
 
@@ -469,7 +474,7 @@ impl Mesher {
 
         let nv = v.len();
 
-        /* Sort the vertex array by y-coordinate */
+        // Sort the vertex array by y-coordinate
         s.sort_by(|a, b| unsafe {
             let v1 = (**a).pos;
             let v2 = (**b).pos;
@@ -499,7 +504,7 @@ impl Mesher {
             vinit: [Vertex::default(), Vertex::default()],
         }));
 
-        /* Initialize lists */
+        // Initialize lists
         pinned.efree.init();
         pinned.eused.init();
         pinned.tfree.init();
@@ -519,9 +524,8 @@ impl Mesher {
             t[i].insert_after(pinned.tfree.prev());
         }
 
-        /* Initialize the initial edge. To do this, find */
-        /* boundbox by the set of points and make an edge */
-        /* on its lower boundary with a margin */
+        // Initialize the initial edge. To do this, find boundbox by the set of points and make an
+        // edge on its lower boundary with a margin */
         let mut bbox_min = [0.; 2];
         let mut bbox_max = [0.; 2];
         bbox_min[0] = v[0].pos.x;
@@ -549,14 +553,6 @@ impl Mesher {
         pinned.vinit[0].edges.init();
         pinned.vinit[1].edges.init();
 
-        /*
-        /* Инициализируем отладочные поля */
-        m->debug.stop_at_step = -1;
-        m->debug.curr_step = 0;
-        m->debug.message[0] = 0;
-        m->debug.breakpoint = false;
-        */
-
         Self {
             nv,
             v: Pin::new(v),
@@ -579,24 +575,24 @@ impl Mesher {
         let nobjects = self.prepare_triangulation_objects()?;
 
         for object in 0..nobjects {
-            /* Triangulation without restriction. */
-            /* Creates a convex triangulation on the entire set of points */
+            // Triangulation without restriction.
+            // Creates a convex triangulation on the entire set of points
             self.sweep_points(object)?;
 
-            /* Grid optimization */
+            // Grid optimization
             if optimize {
                 self.optimize_all(deep, object)?;
             }
 
-            /* Inserting structural segments */
+            // Inserting structural segments
             if constraints {
                 self.handle_constraints(object)?;
             }
 
-            /* Remove unnecessary triangles */
+            // Remove unnecessary triangles
             self.remove_excess_triangles()?;
 
-            /* Grid optimization */
+            // Grid optimization
             if optimize {
                 self.optimize_all(deep, object)?;
             }
@@ -604,20 +600,16 @@ impl Mesher {
         Ok(())
     }
 
-    /**
-     * @brief Contour error correction function
-     *
-     * Attempts to correct two types of errors: points with duplicate
-     * coordinates and outline twists. In some fonts such effects are
-     * observed. In most cases we can speak of design errors. Such
-     * errors are not critical for a typical rasterizer, but
-     * triangulation fails on such contours. For this reason this
-     * feature is introduced. It will become more and more complex
-     * in the future.
-     */
+    /// Contour error correction function
+    ///
+    /// Attempts to correct two types of errors: points with duplicate coordinates and outline
+    /// twists. In some fonts such effects are observed. In most cases we can speak of design
+    /// errors. Such errors are not critical for a typical rasterizer, but triangulation fails on
+    /// such contours. For this reason this feature is introduced. It will become more and more
+    /// complex in the future.
     fn fix_contours_bugs(&mut self) -> Result<(), TriangulatorError> {
         unsafe {
-            /* Trying to deal with duplicate points */
+            // Trying to deal with duplicate points
             let mut need_resorting = false;
             for i in 0..(self.nv - 1) {
                 let v1 = self.s[i];
@@ -628,9 +620,9 @@ impl Mesher {
                     continue;
                 }
 
-                /* Duplicates have been encountered. Let's try to move the points */
-                /* so as not to create a collision of contours */
-                let mut v1dir = [Vec2::ZERO; 2]; /* Direction from the point towards its neighbours in the contour */
+                // Duplicates have been encountered. Let's try to move the points
+                // so as not to create a collision of contours
+                let mut v1dir = [Vec2::ZERO; 2]; // Direction from the point towards its neighbours in the contour
                 let mut v2dir = [Vec2::ZERO; 2];
                 let mut delta = [Vec2::ZERO; 2];
 
@@ -654,7 +646,7 @@ impl Mesher {
 
                 need_resorting = true;
             }
-            /* Sort the vertex array by y-coordinate */
+            // Sort the vertex array by y-coordinate
             if need_resorting {
                 self.s.sort_by(|a, b| {
                     let v1 = (**a).pos;
@@ -677,13 +669,12 @@ impl Mesher {
                 });
             }
 
-            /* Trying to deal with loop kinks like this:
-                     D|                         D
-            A ________|__ B                     |
-                      | /      change it to     / B    by interchanging B and C in the loop
-                      |/               ________/
-                      C                A       C
-            */
+            // Try to deal with loop kinks like this:
+            //          D|                         D
+            // A ________|__ B                     |
+            //           | /      change it to     / B    by interchanging B and C in the loop
+            //           |/               ________/
+            //           C                A       C
             for i in 0..self.nv {
                 let a = &mut self.v[i] as *mut Vertex;
                 let b = (*a).next_in_contour;
@@ -699,11 +690,6 @@ impl Mesher {
                 if !(arg1 > 0.0 && arg1 < 1.0 && arg2 > 0.0 && arg2 < 1.0) {
                     continue;
                 }
-                /*
-                arg1 = fabsf(arg1 - 0.5f) * 2;
-                arg2 = fabsf(arg2 - 0.5f) * 2;
-                if (!(arg1 > 0.8f && arg1 < 1.0f && arg2 > 0.8f && arg2 < 1.0f)) continue;
-                */
                 (*a).next_in_contour = c;
                 (*c).next_in_contour = b;
                 (*b).next_in_contour = d;
@@ -716,18 +702,13 @@ impl Mesher {
         }
     }
 
-    /**
-     * @brief Prepares independent triangulation objects
-     *
-     * Some symbols contain multiple independent paths. If they are
-     * processed by a single triangulation pass, there is a high
-     * chance of error due to duplicate points and intersections.
-     * Therefore, triangulation is performed independently on such
-     * contours. This function assigns each point its ordinal
-     * triangulation number depending on the previously set contour
-     * and nested_to fields. The function returns the number of
-     * triangulation objects.
-     */
+    /// Prepares independent triangulation objects
+    ///
+    /// Some symbols contain multiple independent paths. If they are processed by a single
+    /// triangulation pass, there is a high chance of error due to duplicate points and
+    /// intersections. Therefore, triangulation is performed independently on such contours. This
+    /// function assigns each point its ordinal triangulation number depending on the previously set
+    /// contour and nested_to fields. The function returns the number of triangulation objects.
     fn prepare_triangulation_objects(&mut self) -> Result<usize, TriangulatorError> {
         let mut res: usize = 0;
         let mut cont2obj: [i16; 256] = [-1; 256];
@@ -761,49 +742,39 @@ impl Mesher {
         return Ok(res);
     }
 
-    /**
-     * @brief Алгоритм линейного заметания (без ограничений)
-     * @param m Структура мешера
-     * @return MESHER_XXX
-     *
-     * Модификация линейного алгоритма заметания точек. Результатом
-     * работы является выпуклая неоптимальная триангуляция без
-     * ограничений. Суть алгоритма: перебираются точки триангуляции
-     * ранее отсортированные по координате (y); из каждой точки
-     * опускается вертикаль на заметающую ломаную. Эта вертикаль
-     * пересекает определённый отрезок в составе ломаной кривой.
-     * Такой отрезок и текущая точка составляют новый треугольник,
-     * после чего он исключается из заметающей ломаной, а заместо
-     * него вставляются 2 образовавшихся ребра треугольника.
-     * Модификация алгоритма состоит в том, что образовавшийся выступ
-     * соединяется с соседними отрезками заметающей ломаной при
-     * соблюдении ограничивающих условий. Такой подход позволяет
-     * заметно приблизиться к оптимальному графу и зачастую
-     * предотвращает образование сильно игольчатой заметающей ломаной.
-     * После перебора всех точек триангуляция достраивается до
-     * выпуклой.
-     * Сложность алгоритма стремится к линейной, что обусловлено
-     * характером следования точек: при переборе отсортированных
-     * по (y) точек велика вероятность, что соседние точки принадлежат
-     * одному контуру глифа, то есть удалены друг от друга по (x)
-     * незначительно. В этом случае опустившаяся вертикаль на ломаную
-     * кривую со значительной вероятностью попадёт на недавно созданный
-     * отрезок этой ломаной. Поэтому в большинстве случаев не
-     * приходится искать в списке отрезков ломаной тот отрезок, который
-     * пересекает вертикаль.
-     */
+    /// Algorithm of linear sweeping (no restrictions)
+    ///
+    /// Modification of the linear point-spacing algorithm. The result is a convex non-optimal
+    /// unconstrained triangulation. The essence of the algorithm: go through the triangulation
+    /// points previously sorted by coordinate (y); from each point descend a vertical line to the
+    /// noticing broken line. This vertical line intersects a certain segment of the broken curve.
+    /// Such a segment and the current point form a new triangle, and then it is excluded from the
+    /// noticing polyline, and instead of it are inserted 2 formed edges of the triangle. A
+    /// modification of the algorithm is that the resulting ledge is connected to the adjacent
+    /// segments of the conspicuous polyline subject to bounding conditions. This approach allows
+    /// you to get markedly closer to the optimal graph and often prevents the formation of a highly
+    /// needle-shaped conspicuous polyline. After trying all points the triangulation is refined to
+    /// convex.
+    ///
+    /// The complexity of the algorithm tends to linear, which is due to the nature of the
+    /// sequence of points: when enumerating the points sorted by (y), it is highly probable that
+    /// the neighboring points belong to the same glyph contour, i.e. are distant from each other by
+    /// (x) insignificantly. In this case, the descending vertical line on a broken curve is very
+    /// likely to fall on a newly created segment of this broken curve. So in most cases you don't
+    /// have to look in the list of segments of a broken curve for the segment that intersects the
+    /// vertical.
     fn sweep_points(&mut self, object: usize) -> Result<(), TriangulatorError> {
         unsafe {
-            /* STEP 1: Non-convex triangulation */
+            // STEP 1: Non-convex triangulation
 
-            /* Initialization */
+            // Initialization
             let Some(curr) = self.create_edge(&self.pinned.vinit[0] as *const Vertex as *mut Vertex, &self.pinned.vinit[1] as *const Vertex as *mut Vertex) else { return Err(TriangulatorError::Fail) };
             let mut curr = curr.as_ptr();
             let mut convx = EdgeNode::default();
             convx.init();
             convx.reattach(curr);
 
-            /* Cycle through all vertices of the selected contour */
+            // Cycle through all vertices of the selected contour
             for i in 0..self.nv {
                 let v = self.s[i];
 
@@ -811,9 +782,9 @@ impl Mesher {
                     continue;
                 }
 
-                /* Find the edge directly below the current point */
+                // Find the edge directly below the current point
                 if (*(*curr).v1).pos.x > (*v).pos.x {
-                    /* Moving to the left along the shell */
+                    // Moving to the left along the shell
                     loop {
                         curr = (*curr).prev();
                         let dx1 = (*(*curr).v1).pos.x - (*v).pos.x;
@@ -823,7 +794,7 @@ impl Mesher {
                         }
                     }
                 } else if (*(*curr).v2).pos.x < (*v).pos.x {
-                    /* Moving to the right along the shell */
+                    // Moving to the right along the shell
                     loop {
                         curr = (*curr).next();
                         let dx1 = (*(*curr).v1).pos.x - (*v).pos.x;
@@ -846,26 +817,26 @@ impl Mesher {
                     }
                 }
 
-                /* Create two new edges (to the left and right of the current point) */
+                // Create two new edges (to the left and right of the current point)
                 let Some(l) = self.create_edge((*curr).v1, v) else { return Err(TriangulatorError::Fail) };
                 let Some(r) = self.create_edge(v, (*curr).v2) else { return Err(TriangulatorError::Fail) };
                 let mut l = l.as_ptr();
                 let mut r = r.as_ptr();
 
-                /* Replace in the shell the edge found with two created edges. Observe
-                the property of sorting edges in the envelope by x-coordinate. */
+                // Replace in the shell the edge found with two created edges. Observe the property
+                // of sorting edges in the envelope by x-coordinate.
                 (*l).detach();
                 (*r).detach();
                 (*l).insert_after(curr);
                 (*r).insert_after(l);
                 self.pinned.eused.reattach(curr);
 
-                /* Register a triangle on all three edges */
+                // Register a triangle on all three edges
                 if self.create_triangle(l, r, curr).is_none() {
                     return Err(TriangulatorError::Fail);
                 }
 
-                /* If the edge is vertical, make sure it is covered */
+                // If the edge is vertical, make sure it is covered
                 if ((*(*l).v1).pos.x - (*(*l).v2).pos.x).abs() <= EPSILON {
                     let Some(ll) = self.make_convex((*l).prev(), l, l).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
                     l = ll;
@@ -897,14 +868,14 @@ impl Mesher {
                     r = tmp;
                 }
 
-                curr = r; /* Maybe L, there is no point in guessing the nature of the data */
+                curr = r; // Maybe L, there is no point in guessing the nature of the data
 
                 if l == std::ptr::null_mut() || r == std::ptr::null_mut() {
                     return Err(TriangulatorError::Fail);
                 }
             }
 
-            /* ЭТАП 2. Достраивание триангуляции до выпуклой */
+            // STEP 2: Finishing triangulation to convex
 
             let mut done = true;
             while done {
@@ -1066,6 +1037,7 @@ impl Mesher {
         }
     }
 
+    /// Attempt to optimize the entire graph
     fn optimize_all(&mut self, deep: i32, object: usize) -> Result<(), TriangulatorError> {
         unsafe {
             let mut e = self.pinned.eused.next();
@@ -1093,13 +1065,10 @@ impl Mesher {
             let o0 = (*(*e).tr[0]).opposite_vert(e);
             let o1 = (*(*e).tr[1]).opposite_vert(e);
 
-            /* Проверим четырёхугольник на выпуклость (впуклые уже оптимальны по Делоне) */
+            // Let's check the quadrilateral for convexity (convexes are already optimal according to Delaunay)
             if !is_convex_quad((*e).v1, o0, (*e).v2, o1) {
                 return Ok(());
             }
-
-            /* Проверим условие Делоне */
-            //    if (check_delone(e->v1, o0, e->v2, o1)) return MESHER_DONE;
 
             let mut done1 = true;
             if (*(*e).tr[0]).cc.radius == 0. {
@@ -1156,18 +1125,15 @@ impl Mesher {
     }
 
     fn flip_edge(&mut self, e: *mut EdgeNode) -> Result<(), TriangulatorError> {
-        /*
-            Делаем инваиантное преобразование
-
-            v1
-            /|\                      / \
-        c / | \ a                c /t0 \ a
-        B / e|  \ A      ->        /_____\ e->v1
-            \t1|t0/                  \   e /
-        d \ | / b                d \t1 / b
-            \|/                      \ /
-            v2
-            */
+        // Doing an invariant conversion
+        //      v1
+        //      /|\                      / \
+        //   c / | \ a                c /t0 \ a
+        //  B / e|  \ A      ->        /_____\ e->v1
+        //    \t1|t0/                  \   e /
+        //   d \ | / b                d \t1 / b
+        //      \|/                      \ /
+        //      v2
 
         unsafe {
             let mut t0 = (*e).tr[0];
@@ -1196,12 +1162,12 @@ impl Mesher {
             let Some(t1_) = self.create_triangle(b, d, e).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
             t1 = t1_;
 
-            /* Восстанавливаем поля после пересоздания */
+            // Restoring fields after recreating
             (*t0).helper = t0copy.helper;
             (*t1).helper = t1copy.helper;
             (*t0).cc = ecopy.alt_cc[0];
             (*t1).cc = ecopy.alt_cc[1];
-            (*e).alt_cc[0] = t1copy.cc; /* flip copy! */
+            (*e).alt_cc[0] = t1copy.cc; // flip copy!
             (*e).alt_cc[1] = t0copy.cc;
 
             Ok(())
@@ -1281,6 +1247,7 @@ impl Mesher {
         }
     }
 
+    /// Function for successive insertion of structural segments
     fn handle_constraints(&mut self, object: usize) -> Result<(), TriangulatorError> {
         for i in 0..self.nv {
             if self.v[i].object != object {
@@ -1297,6 +1264,13 @@ impl Mesher {
         Ok(())
     }
 
+    /// Function for inserting one structural segment
+    ///
+    /// This function is called for all structural segments, that should describe closed contours,
+    /// but are missing after performing unconstrained triangulation. The function is one of the
+    /// most complicated ones. Further work is to optimize it and make it more stable. If the
+    /// initial contours contain errors, it is usually, reveal in the process of work of this
+    /// function. So it's always it is always relevant to search for its most stable variation.
     fn insert_fixed_edge(
         &mut self,
         v1: *mut Vertex,
@@ -1307,8 +1281,8 @@ impl Mesher {
             track.init();
             self.find_triangles_track(v1, v2, &mut track as *mut EdgeNode)?;
 
-            /* Формируем два контура из рёбер, описывающих образовавшуюся после удаления */
-            /* треугольников пустоту (с одной и с другой стороны от вставляемого ребра v1->v2) */
+            // Form two contours from the edges that describe the void formed after removing the
+            // triangles (on one and on the other side of the inserted edge v1->v2)
 
             let mut cntr1 = find_edge(v1, (*track.next()).v1);
             let mut cntr2 = find_edge(v1, (*track.next()).v2);
@@ -1356,7 +1330,7 @@ impl Mesher {
             cntr1 = (*cntr1).next();
             cntr2 = (*cntr2).next();
 
-            /* Удалим мешающие треугольники */
+            // Remove interfering triangles
             let mut e = track.next();
             while e != &mut track {
                 if (*e).tr[1] != std::ptr::null_mut() {
@@ -1368,7 +1342,7 @@ impl Mesher {
                 e = (*e).next();
             }
 
-            /* Удаляем больше не нужные грани трека */
+            // Remove any more unnecessary edges of the track
             while !track.empty() {
                 if (*track.next()).is_contour_edge() {
                     return Err(TriangulatorError::Fail);
@@ -1376,7 +1350,7 @@ impl Mesher {
                 self.free_edge(track.next());
             }
 
-            /* Проверяем контуры на целостность. Это временная мера. */
+            // Check the circuits for continuity. This is a temporary measure.
             let mut v = v1;
             let mut e = cntr1;
             loop {
@@ -1410,12 +1384,12 @@ impl Mesher {
                 break;
             }
 
-            /* Создаём вставляемое ребро */
+            // Create an insertion edge
             let Some(ins) = self.create_edge(v1, v2).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
 
-            /* Триангулируем получившуюся после удаления дыру рекурсивным */
-            /* алгоритмом. В процессе работы он вернёт все грани списков */
-            /* cntr1 и cntr2 обратно мешеру (в список eused) */
+            // We triangulate the resulting hole after deletion with the recursive algorithm. In the
+            // process, it will return all edges of lists cntr1 and cntr2 back to the mesher (to the
+            // list eused)
             self.triangulate_hole(cntr1, ins)?;
             self.triangulate_hole(cntr2, ins)?;
 
@@ -1423,6 +1397,18 @@ impl Mesher {
         }
     }
 
+    /// Auxiliary function to call insert_fixed_edge
+    ///
+    /// The reference edge at the start of insert_fixed_edge is the inserted structural segment.
+    /// Relative to it, the hole is described by two contours (top and bottom). This hole is formed
+    /// before the function is called after removing triangles and edges on the insertion path of
+    /// the structural segment. Thus, according to A.V. Skvortsov's classification, this function is
+    /// a building function in terms of the "insert and build" algorithm.
+    ///
+    /// The construction algorithm is described as follows. We look for the nearest point to the
+    /// reference edge in the contour, form a triangle on the reference edge and that point, and
+    /// repeat the algorithm on two new reference edges formed by the triangle. At that, at the
+    /// nearest found point we tear the cntr list.
     fn triangulate_hole(
         &mut self,
         cntr: *mut EdgeNode,
@@ -1434,36 +1420,34 @@ impl Mesher {
                 return Ok(());
             }
 
-            /* Если в контуре только 2 грани, то формируем треугольник */
+            // If the contour has only 2 faces, then form a triangle
             if (*(*cntr).next()).next() == cntr {
                 let Some(t) = self.create_triangle(cntr, (*cntr).next(), base).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
-                /* И вернём мешеру грани из контура */
+                // And let's return the mesher's edges from the outline
                 self.pinned.eused.reattach((*t).edge[0]);
                 self.pinned.eused.reattach((*t).edge[1]);
                 return Ok(());
             }
 
-            /* Ищем самую близкую точку из контура к ребру base */
+            // Look for the closest point from the contour to the base edge
 
             let mut closest_edge: *mut EdgeNode = std::ptr::null_mut();
             let mut closest_vert: *mut Vertex = std::ptr::null_mut();
-            let mut closest_proj = 0.; /* Дальность не нормированная */
+            let mut closest_proj = 0.; // Range is not normalized
 
-            let base_dir = (*(*base).v2).pos - (*(*base).v1).pos;
-            let mut orth = Vec2::ZERO; /* Ортогональный вектор к вектору base */
+            let base_dir = (*(*base).v2).pos - (*(*base).v1).pos; // Directional vector
+            let mut orth = Vec2::ZERO; // Orthogonal vector to vector base
             orth[0] = base_dir[1];
             orth[1] = -base_dir[0];
 
             let mut e = cntr;
             while (*e).next() != cntr {
                 let v = (*e).common_vert((*e).next());
-                /*
-                                . v
-                                |
-                                | proj
-                                |
-                base.v1 ._______|_______. base.b2
-                */
+                //                 . v
+                //                 |
+                //                 | proj
+                //                 |
+                // base.v1 ._______|_______. base.b2
 
                 let vvec = (*v).pos - (*(*base).v1).pos;
                 let proj = orth.dot(vvec).abs();
@@ -1480,7 +1464,7 @@ impl Mesher {
                 return Err(TriangulatorError::Fail);
             }
 
-            /* Формируем треугольник на базовом ребре и найденной точке */
+            // Form a triangle on the base edge and the found point
             let mut l = find_edge((*base).v1, closest_vert);
             if l == std::ptr::null_mut() {
                 let Some(l_) = self.create_edge((*base).v1, closest_vert).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
@@ -1496,8 +1480,8 @@ impl Mesher {
             }
             let Some(_t) = self.create_triangle(base, l, r).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
 
-            /* Запускаем функцию рекурсивно с базовым ребром L и R */
-            /* Сначала размыкаем контур, формируя из него 2 других */
+            // Start the function recursively with the base edge L and R
+            // First open the contour by forming 2 other contours
             let new_cntr1_beg = cntr;
             let new_cntr1_end = closest_edge;
             let new_cntr2_beg = (*closest_edge).next();
@@ -1524,10 +1508,10 @@ impl Mesher {
             let mut tcurr: *mut TriangleNode = std::ptr::null_mut();
             let mut ecurr: *mut EdgeNode = std::ptr::null_mut();
 
-            /* Find the triangle and its edge opposite v1, which intersects the segment v1-v2 */
+            // Find the triangle and its edge opposite v1, which intersects the segment v1-v2
             let mut v2l = (*v1).edges.next();
             while v2l != &mut (*v1).edges && tcurr == std::ptr::null_mut() {
-                /* Cycle through the triangles on the current edge */
+                // Cycle through the triangles on the current edge
                 let mut i = 0;
                 while i < 2 && tcurr == std::ptr::null_mut() {
                     let t = (*(*v2l).edge).tr[i];
@@ -1589,16 +1573,25 @@ impl Mesher {
         }
     }
 
+    /// Removes extra triangles from convex triangulation
+    ///
+    /// The algorithm is simple and is essentially a variant of even-odd. The traversal of all
+    /// triangles of convex triangulation begins with the triangle constructed on an auxiliary edge
+    /// below the entire graph. This triangle is marked for deletion as well as all its neighbors
+    /// if they are not separated from it by a structural segment. Each time the structural segment
+    /// is crossed the sign of deletion is inverted. After all triangles are traversed, the
+    /// triangles marked for deletion are deleted. The algorithm is shown to be very efficient with
+    /// linear complexity.
     fn remove_excess_triangles(&mut self) -> Result<(), TriangulatorError> {
         unsafe {
-            /*  Let's enumerate the triangles, moving from neighbour to neighbour */
-            /* If the separating edge lies on the contour, then invert the sign when */
-            /* crossing over it. Then remove all negative triangles. */
+            // Let's enumerate the triangles, moving from neighbour to neighbour. If the separating
+            // edge lies on the contour, then invert the sign when crossing over it. Then remove
+            // all negative triangles.
 
-            let mut root = TriangleNode::default(); /* The root of the list to be generated */
+            let mut root = TriangleNode::default(); // The root of the list to be generated
             root.init();
 
-            /* Add the first triangle with a negative sign (helper=0) */
+            // Add the first triangle with a negative sign (helper=0)
             let l = self.pinned.vinit[0].edges.next();
             if l == &mut self.pinned.vinit[0].edges {
                 return Err(TriangulatorError::Fail);
@@ -1634,7 +1627,7 @@ impl Mesher {
                 let tmp = t;
                 t = (*t).next();
 
-                /* Удаляем, либо возвращаем в штатный список */
+                // Delete, or return to the regular list
                 if (*tmp).helper == 0 {
                     self.free_triangle(tmp, true);
                 } else {
@@ -1657,8 +1650,6 @@ impl Mesher {
         let mut t = self.pinned.tused.next();
         while t != &self.pinned.tused as *const TriangleNode as *mut TriangleNode {
             unsafe {
-                //mvs_t *v1, *v2, *v3;
-                //float d1[2], d2[2];
                 if (*(*t).edge[1]).is_contour_edge() {
                     swap(&mut (*t).edge[0], &mut (*t).edge[1])
                 } else if (*(*t).edge[2]).is_contour_edge() {
@@ -1672,10 +1663,6 @@ impl Mesher {
                 if d1.cross(d2) < 0. {
                     swap(&mut v1, &mut v2);
                 }
-                /*out->faces[out->nfaces].v1 = v1 - mesh->v;
-                out->faces[out->nfaces].v2 = v2 - mesh->v;
-                out->faces[out->nfaces].v3 = v3 - mesh->v;
-                out->nfaces++;*/
                 triangles.push([(*v1).pos, (*v2).pos, (*v3).pos]);
                 t = (*t).next();
             }
@@ -1693,26 +1680,39 @@ fn lines_cross_args(
     aarg: &mut f32,
     barg: &mut f32,
 ) -> bool {
-    /*
-          a1
-         /
-    b1__/_______ b2
-       /
-      a2
-    */
-
-    /* { c = a1 + (a2 - a1) * d1 */
-    /* { c = b1 + (b2 - b1) * d2 */
-
-    /* (a2 - a1) * d1 - (b2 - b1) * d2 + a1 - b1 = 0 */
-
-    /*
-        { (ax2 - ax1) d1  +  (bx1 - bx2) d2  =  bx1 - ax1
-        { (ay2 - ay1) d1  +  (by1 - by2) d2  =  by1 - ay1
-
-        [a1 b1] [d1] = [c1]
-        [a2 b2] [d2]   [c2]
-    */
+    //       a1
+    //      /
+    // b1__/_______ b2
+    //    /
+    //   a2
+    //
+    // { c = a1 + (a2 - a1) * d1
+    // { c = b1 + (b2 - b1) * d2
+    //
+    // (a2 - a1) * d1 - (b2 - b1) * d2 + a1 - b1 = 0
+    //
+    //  { (ax2 - ax1) d1  +  (bx1 - bx2) d2  =  bx1 - ax1
+    //  { (ay2 - ay1) d1  +  (by1 - by2) d2  =  by1 - ay1
+    //
+    //  [a1 b1] [d1] = [c1]
+    //  [a2 b2] [d2]   [c2]
+    //
+    //       a1
+    //      /
+    // b1__/_______ b2
+    //    /
+    //   a2
+    //
+    // { c = a1 + (a2 - a1) * d1
+    // { c = b1 + (b2 - b1) * d2
+    //
+    // (a2 - a1) * d1 - (b2 - b1) * d2 + a1 - b1 = 0
+    //
+    //  { (ax2 - ax1) d1  +  (bx1 - bx2) d2  =  bx1 - ax1
+    //  { (ay2 - ay1) d1  +  (by1 - by2) d2  =  by1 - ay1
+    //
+    //  [a1 b1] [d1] = [c1]
+    //  [a2 b2] [d2]   [c2]
 
     let aa1 = a2.pos.x - a1.pos.x;
     let bb1 = b1.pos.x - b2.pos.x;
@@ -1731,6 +1731,7 @@ fn lines_cross_args(
     return true;
 }
 
+// return 1 if quad is convex
 fn is_convex_quad(
     aa: *const Vertex,
     bb: *const Vertex,
@@ -1765,18 +1766,16 @@ fn is_convex_quad(
 }
 
 fn calc_circumcircle(aa: Vec2, bb: Vec2, cc: Vec2, mcc: &mut Circumcircle) -> bool {
-    /*
-      { (o[0] - A[0])^2 + (o[1] - A[1])^2 = r^2
-      { (o[0] - B[0])^2 + (o[1] - B[1])^2 = r^2
-      { (o[0] - C[0])^2 + (o[1] - C[1])^2 = r^2
-
-    _ { o[0]^2 - 2 o[0] A[0] + A[0]^2   +   o[1]^2 - 2 o[1] A[1] + A[1]^2   =   r^2
-    _ { o[0]^2 - 2 o[0] B[0] + B[0]^2   +   o[1]^2 - 2 o[1] B[1] + B[1]^2   =   r^2
-      { o[0]^2 - 2 o[0] C[0] + C[0]^2   +   o[1]^2 - 2 o[1] C[1] + C[1]^2   =   r^2
-
-      { o[0] 2 (A[0] - B[0]) + o[1] 2 (A[1] - B[1]) = A[0]^2 + A[1]^2 - B[0]^2 - B[1]^2
-      { o[0] 2 (B[0] - C[0]) + o[1] 2 (B[1] - C[1]) = B[0]^2 + B[1]^2 - C[0]^2 - C[1]^2
-      */
+    //   { (o[0] - A[0])^2 + (o[1] - A[1])^2 = r^2
+    //   { (o[0] - B[0])^2 + (o[1] - B[1])^2 = r^2
+    //   { (o[0] - C[0])^2 + (o[1] - C[1])^2 = r^2
+    //
+    // _ { o[0]^2 - 2 o[0] A[0] + A[0]^2   +   o[1]^2 - 2 o[1] A[1] + A[1]^2   =   r^2
+    // _ { o[0]^2 - 2 o[0] B[0] + B[0]^2   +   o[1]^2 - 2 o[1] B[1] + B[1]^2   =   r^2
+    //   { o[0]^2 - 2 o[0] C[0] + C[0]^2   +   o[1]^2 - 2 o[1] C[1] + C[1]^2   =   r^2
+    //
+    //   { o[0] 2 (A[0] - B[0]) + o[1] 2 (A[1] - B[1]) = A[0]^2 + A[1]^2 - B[0]^2 - B[1]^2
+    //   { o[0] 2 (B[0] - C[0]) + o[1] 2 (B[1] - C[1]) = B[0]^2 + B[1]^2 - C[0]^2 - C[1]^2
 
     let mut a = [0.; 4];
     let mut b = [0.; 2];
@@ -1787,7 +1786,7 @@ fn calc_circumcircle(aa: Vec2, bb: Vec2, cc: Vec2, mcc: &mut Circumcircle) -> bo
     b[0] = aa[0] * aa[0] + aa[1] * aa[1] - bb[0] * bb[0] - bb[1] * bb[1];
     b[1] = bb[0] * bb[0] + bb[1] * bb[1] - cc[0] * cc[0] - cc[1] * cc[1];
 
-    /* linsolver of: a * XY = c */
+    // linsolver of: a * XY = c
     let det = a[0] * a[3] - a[1] * a[2];
     if det.abs() <= EPSILON {
         return false;
@@ -1795,7 +1794,7 @@ fn calc_circumcircle(aa: Vec2, bb: Vec2, cc: Vec2, mcc: &mut Circumcircle) -> bo
     mcc.center[0] = (b[0] * a[3] - a[1] * b[1]) / det;
     mcc.center[1] = (a[0] * b[1] - b[0] * a[2]) / det;
 
-    /* calc r */
+    // calc r
     let dx = aa[0] - mcc.center[0];
     let dy = aa[1] - mcc.center[1];
     mcc.radius = (dx * dx + dy * dy).sqrt();
@@ -1815,18 +1814,22 @@ fn find_edge(v1: *mut Vertex, v2: *mut Vertex) -> *mut EdgeNode {
     }
 }
 
+/// Checks if two segments have at least one point in common
+///
+/// Line segments degenerate to a line are allowed.
+///
+/// The result corresponds to the geometric representation when two objects (segment or point)
+/// coincide or have at least one point in common in the drawing at finite scale approximation
+/// (defined by the EPSILON constant)
 fn lines_has_common_point(l1p1: Vec2, l1p2: Vec2, l2p1: Vec2, l2p2: Vec2) -> bool {
-    //float e1[2], e2[2], l2[2][2];
-    //float len, k, b, x0;
-
     let mut e1 = l1p2 - l1p1;
     let mut e2 = Vec2::ZERO;
     let mut len = e1.length_squared();
 
-    /* l1 - это точка? */
+    /* l1 - is it a point? */
     if len < EPSILON {
-        /* ---------->x---------> */
-        /*   vec e1      vec e2   */
+        // ---------->x--------->
+        //   vec e1      vec e2
         e1 = l1p1 - l2p1;
         e2 = l2p2 - l1p1;
         if e1.cross(e2).abs() > EPSILON {
@@ -1835,25 +1838,23 @@ fn lines_has_common_point(l1p1: Vec2, l1p2: Vec2, l2p1: Vec2, l2p2: Vec2) -> boo
         return e1.dot(e2) >= -EPSILON;
     }
 
-    /* Подготовим базис <e1,e2> такой что проекция */
-    /* вектора (l1p2-l1p1) будет давать единицу */
+    // Prepare a basis <e1,e2> such that the projection of the vector (l1p2-l1p1) gives one
     len = 1.0 / len;
     e1[0] *= len;
     e1[1] *= len;
     e2[0] = e1[1];
     e2[1] = -e1[0];
 
-    /* Спроецируем l2 в этот базис */
+    // Let us project l2 into this basis
     let mut l2 = [Vec2::ZERO; 2];
     l2[0] = l2p1 - l1p1;
     l2[1] = l2p2 - l1p1;
     l2[0] = l2[0].proj(e1, e2);
     l2[1] = l2[1].proj(e1, e2);
 
-    /* Проверим, имеет ли l2 общие точки c */
-    /* единичным отрезком на оси OX */
+    // Check if l2 has common points with the unit segment on the OX axis
 
-    /* l2 - это точка? */
+    // l2 - is it a point?
     e1 = l2[1] - l2[0];
     len = e1.length_squared();
     if len < EPSILON {
@@ -1862,11 +1863,11 @@ fn lines_has_common_point(l1p1: Vec2, l1p2: Vec2, l2p1: Vec2, l2p2: Vec2) -> boo
             && ((l2[0][1]).abs() <= EPSILON);
     }
 
-    /* l2 - это горизонтальная прямая? */
+    // l2 - is it a horizontal straight line?
     if (l2[0][1] - l2[1][1]).abs() <= EPSILON {
         if l2[0][1].abs() > EPSILON {
             return false;
-        } /* Не на оси OX */
+        } // Not on the OX axis
         if l2[0][0] >= -EPSILON && l2[0][0] <= 1. + EPSILON {
             return true;
         }
@@ -1879,20 +1880,20 @@ fn lines_has_common_point(l1p1: Vec2, l1p2: Vec2, l2p1: Vec2, l2p2: Vec2) -> boo
         return false;
     }
 
-    /* l2 - это вертикальная прямая? */
+    // l2 - is it a vertical straight line?
     if (l2[0][0] - l2[1][0]).abs() <= EPSILON {
         return (l2[0][0] >= -EPSILON)
             && (l2[0][0] <= 1.0 + EPSILON)
             && (l2[0][1] * l2[1][1] <= EPSILON);
     }
 
-    /* l2 - это наклонная прямая, проверим её в диапазоне y */
+    // l2 - is a sloping straight line, check it in the range of y
     if l2[0][1] * l2[1][1] > EPSILON {
         return false;
     }
 
-    /* Проверим пересечение с OX решив уравнение kx + b = 0  */
-    /* Выражденные случаи мы проверили предыдущими условиями */
+    // Let us check the intersection with OX by solving the equation kx + b = 0
+    // We have checked the expressed cases by the previous conditions
     let (k, b);
     cramer2X2!(k, b, l2[0][0], 1.0, l2[0][1], l2[1][0], 1.0, l2[1][1]);
     let x0 = -b / k;
