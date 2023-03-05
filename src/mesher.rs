@@ -1,4 +1,9 @@
-use std::{cmp::Ordering, mem::swap, pin::Pin, ptr::NonNull};
+use std::{
+    cmp::Ordering,
+    mem::swap,
+    pin::Pin,
+    ptr::{self, NonNull},
+};
 
 use crate::{linked_list::LinkedListNode, vec2::Vec2, Triangulator, TriangulatorError, EPSILON};
 
@@ -276,17 +281,17 @@ mod data {
     /// ttf2mesh library which does the same thing.
     pub(super) struct MesherData {
         /// Length of maxv
-        pub(super) max_vertices: usize,
+        max_vertices: usize,
         /// Vertex pool, length of maxv
-        pub(super) vertex_pool: *mut Vertex,
+        vertex_pool: *mut Vertex,
         /// Edge pool, length of maxe
-        pub(super) edge_pool: *mut EdgeNode,
+        edge_pool: *mut EdgeNode,
         /// Triangle pool, length of maxt
-        pub(super) triangle_pool: *mut TriangleNode,
+        triangle_pool: *mut TriangleNode,
         /// Vertex->edge pool, length of (2 * maxe)
-        pub(super) vertex_to_edge_pool: *mut VertexToEdgeNode,
+        vertex_to_edge_pool: *mut VertexToEdgeNode,
         /// Sorted by (y) array of vertices
-        pub(super) sorted_by_y_vertices: *mut *mut Vertex,
+        sorted_by_y_vertices: *mut *mut Vertex,
         /// Root of the list of free edges
         pub(super) free_edges: EdgeNode,
         /// Root of the list of edges used
@@ -298,7 +303,7 @@ mod data {
         /// Root of free reference list vertex->edge
         pub(super) free_vertex_to_edges: VertexToEdgeNode,
         /// Two initialisation points along the lower edge of the glyph
-        pub(super) initial_vertices: [Vertex; 2],
+        initial_vertices: [Vertex; 2],
     }
 
     impl MesherData {
@@ -539,80 +544,78 @@ impl Mesher {
     /// such contours. For this reason this feature is introduced. It will become more and more
     /// complex in the future.
     fn fix_contours_bugs(&mut self) -> Result<(), TriangulatorError> {
-        unsafe {
-            // Trying to deal with duplicate points
-            let mut need_resorting = false;
-            for i in 0..(self.nv - 1) {
-                let v1 = *self.data.sorted_by_y_vertex(i);
-                let v2 = *self.data.sorted_by_y_vertex(i + 1);
-                let dx = (*v1).pos.x - (*v2).pos.x;
-                let dy = (*v1).pos.y - (*v2).pos.y;
-                if dx.abs() > EPSILON || dy.abs() > EPSILON {
-                    continue;
-                }
-
-                // Duplicates have been encountered. Let's try to move the points
-                // so as not to create a collision of contours
-                let mut v1dir = [Vec2::ZERO; 2]; // Direction from the point towards its neighbours in the contour
-                let mut v2dir = [Vec2::ZERO; 2];
-                let mut delta = [Vec2::ZERO; 2];
-
-                v1dir[0] = (*(*v1).prev_in_contour).pos - (*v1).pos;
-                v1dir[0] = v1dir[0] * 1e-4 * v1dir[0].length();
-
-                v1dir[1] = (*(*v1).next_in_contour).pos - (*v1).pos;
-                v1dir[1] = v1dir[1] * 1e-4 * v1dir[1].length();
-
-                v2dir[0] = (*(*v2).prev_in_contour).pos - (*v2).pos;
-                v2dir[0] = v2dir[0] * 1e-4 * v2dir[0].length();
-
-                v2dir[1] = (*(*v2).next_in_contour).pos - (*v2).pos;
-                v2dir[1] = v2dir[1] * 1e-4 * v2dir[1].length();
-
-                delta[0] = v1dir[0] + v1dir[1];
-                delta[1] = v2dir[0] + v2dir[1];
-
-                (*v1).pos = (*v1).pos + delta[0];
-                (*v2).pos = (*v2).pos + delta[1];
-
-                need_resorting = true;
-            }
-            // Sort the vertex array by y-coordinate
-            if need_resorting {
-                self.data.sort_by_y(self.nv);
+        // Trying to deal with duplicate points
+        let mut need_resorting = false;
+        for i in 0..(self.nv - 1) {
+            let v1 = unsafe { &mut **self.data.sorted_by_y_vertex(i) };
+            let v2 = unsafe { &mut **self.data.sorted_by_y_vertex(i + 1) };
+            let dx = v1.pos.x - v2.pos.x;
+            let dy = v1.pos.y - v2.pos.y;
+            if dx.abs() > EPSILON || dy.abs() > EPSILON {
+                continue;
             }
 
-            // Try to deal with loop kinks like this:
-            //          D|                         D
-            // A ________|__ B                     |
-            //           | /      change it to     / B    by interchanging B and C in the loop
-            //           |/               ________/
-            //           C                A       C
-            for i in 0..self.nv {
-                let a = self.data.vertex(i) as *mut Vertex;
-                let b = (*a).next_in_contour;
-                let c = (*b).next_in_contour;
-                let d = (*c).next_in_contour;
-                if a == b || a == c || a == d {
-                    continue;
-                }
-                let (mut arg1, mut arg2) = (0., 0.);
-                if !lines_cross_args(&*a, &*b, &*c, &*d, &mut arg1, &mut arg2) {
-                    continue;
-                }
-                if !(arg1 > 0.0 && arg1 < 1.0 && arg2 > 0.0 && arg2 < 1.0) {
-                    continue;
-                }
-                (*a).next_in_contour = c;
-                (*c).next_in_contour = b;
-                (*b).next_in_contour = d;
-                (*c).prev_in_contour = a;
-                (*b).prev_in_contour = c;
-                (*d).prev_in_contour = b;
-            }
+            // Duplicates have been encountered. Let's try to move the points
+            // so as not to create a collision of contours
+            let mut v1dir = [Vec2::ZERO; 2]; // Direction from the point towards its neighbours in the contour
+            let mut v2dir = [Vec2::ZERO; 2];
+            let mut delta = [Vec2::ZERO; 2];
 
-            Ok(())
+            v1dir[0] = unsafe { (*v1.prev_in_contour).pos - v1.pos };
+            v1dir[0] = v1dir[0] * 1e-4 * v1dir[0].length();
+
+            v1dir[1] = unsafe { (*v1.next_in_contour).pos - v1.pos };
+            v1dir[1] = v1dir[1] * 1e-4 * v1dir[1].length();
+
+            v2dir[0] = unsafe { (*v2.prev_in_contour).pos - (*v2).pos };
+            v2dir[0] = v2dir[0] * 1e-4 * v2dir[0].length();
+
+            v2dir[1] = unsafe { (*v2.next_in_contour).pos - (*v2).pos };
+            v2dir[1] = v2dir[1] * 1e-4 * v2dir[1].length();
+
+            delta[0] = v1dir[0] + v1dir[1];
+            delta[1] = v2dir[0] + v2dir[1];
+
+            (*v1).pos = (*v1).pos + delta[0];
+            (*v2).pos = (*v2).pos + delta[1];
+
+            need_resorting = true;
         }
+        // Sort the vertex array by y-coordinate
+        if need_resorting {
+            self.data.sort_by_y(self.nv);
+        }
+
+        // Try to deal with loop kinks like this:
+        //          D|                         D
+        // A ________|__ B                     |
+        //           | /      change it to     / B    by interchanging B and C in the loop
+        //           |/               ________/
+        //           C                A       C
+        for i in 0..self.nv {
+            let a = self.data.vertex(i);
+            let b = unsafe { &mut *a.next_in_contour };
+            let c = unsafe { &mut *b.next_in_contour };
+            let d = unsafe { &mut *c.next_in_contour };
+            if ptr::eq(a, b) || ptr::eq(a, c) || ptr::eq(a, d) {
+                continue;
+            }
+            let (mut arg1, mut arg2) = (0., 0.);
+            if !lines_cross_args(&*a, &*b, &*c, &*d, &mut arg1, &mut arg2) {
+                continue;
+            }
+            if !(arg1 > 0.0 && arg1 < 1.0 && arg2 > 0.0 && arg2 < 1.0) {
+                continue;
+            }
+            a.next_in_contour = c;
+            c.next_in_contour = b;
+            b.next_in_contour = d;
+            c.prev_in_contour = a;
+            b.prev_in_contour = c;
+            d.prev_in_contour = b;
+        }
+
+        Ok(())
     }
 
     /// Prepares independent triangulation objects
@@ -819,23 +822,21 @@ impl Mesher {
     }
 
     fn create_edge(&mut self, v1: *mut Vertex, v2: *mut Vertex) -> Option<NonNull<EdgeNode>> {
-        unsafe {
-            if self.data.free_edges.empty() || self.data.free_vertex_to_edges.empty() {
-                return None;
-            }
-            let res = self.data.free_edges.first();
-            (*res).detach();
-            self.data.used_edges.attach(res);
-            (*res).v1 = v1;
-            (*res).v2 = v2;
-            (*res).alt_cc[0] = Circumcircle::default();
-            (*res).alt_cc[1] = Circumcircle::default();
-            (*res).tr[0] = std::ptr::null_mut();
-            (*res).tr[1] = std::ptr::null_mut();
-            self.create_v2e_link(v1, res);
-            self.create_v2e_link(v2, res);
-            Some(NonNull::new(res).unwrap())
+        if self.data.free_edges.empty() || self.data.free_vertex_to_edges.empty() {
+            return None;
         }
+        let res = unsafe { &mut *self.data.free_edges.first() };
+        res.detach();
+        self.data.used_edges.attach(res);
+        res.v1 = v1;
+        res.v2 = v2;
+        res.alt_cc[0] = Circumcircle::default();
+        res.alt_cc[1] = Circumcircle::default();
+        res.tr[0] = std::ptr::null_mut();
+        res.tr[1] = std::ptr::null_mut();
+        self.create_v2e_link(v1, res);
+        self.create_v2e_link(v2, res);
+        Some(NonNull::new(res).unwrap())
     }
 
     fn create_v2e_link(
@@ -843,16 +844,16 @@ impl Mesher {
         v: *mut Vertex,
         e: *mut EdgeNode,
     ) -> Option<NonNull<VertexToEdgeNode>> {
-        unsafe {
-            if self.data.free_vertex_to_edges.empty() {
-                return None;
-            }
-            let res = self.data.free_vertex_to_edges.first();
-            (*res).detach();
-            (*v).edges.attach(res);
-            (*res).edge = e;
-            Some(NonNull::new(res).unwrap())
+        if self.data.free_vertex_to_edges.empty() {
+            return None;
         }
+        let res = unsafe { &mut *self.data.free_vertex_to_edges.first() };
+        res.detach();
+        unsafe {
+            (*v).edges.attach(res);
+        }
+        res.edge = e;
+        Some(NonNull::new(res).unwrap())
     }
 
     fn create_triangle(
@@ -861,32 +862,34 @@ impl Mesher {
         e2: *mut EdgeNode,
         e3: *mut EdgeNode,
     ) -> Option<NonNull<TriangleNode>> {
-        unsafe {
-            if (*e1).tr[1] != std::ptr::null_mut()
-                || (*e2).tr[1] != std::ptr::null_mut()
-                || (*e3).tr[1] != std::ptr::null_mut()
-            {
-                return None;
-            }
-            if self.data.free_triangles.empty() {
-                return None;
-            }
-            let t = self.data.free_triangles.first();
-            (*t).detach();
-            self.data.used_triangles.attach(t);
-            (*t).helper = -1;
-            (*t).cc = Circumcircle::default();
-            (*e1).tr[1] = (*e1).tr[0];
-            (*e1).tr[0] = t;
-            (*e2).tr[1] = (*e2).tr[0];
-            (*e2).tr[0] = t;
-            (*e3).tr[1] = (*e3).tr[0];
-            (*e3).tr[0] = t;
-            (*t).edge[0] = e1;
-            (*t).edge[1] = e2;
-            (*t).edge[2] = e3;
-            Some(NonNull::new(t).unwrap())
+        let e1 = unsafe { &mut *e1 };
+        let e2 = unsafe { &mut *e2 };
+        let e3 = unsafe { &mut *e3 };
+
+        if (*e1).tr[1] != std::ptr::null_mut()
+            || (*e2).tr[1] != std::ptr::null_mut()
+            || (*e3).tr[1] != std::ptr::null_mut()
+        {
+            return None;
         }
+        if self.data.free_triangles.empty() {
+            return None;
+        }
+        let t = unsafe { &mut *self.data.free_triangles.first() };
+        t.detach();
+        self.data.used_triangles.attach(t);
+        t.helper = -1;
+        t.cc = Circumcircle::default();
+        e1.tr[1] = (*e1).tr[0];
+        e1.tr[0] = t;
+        e2.tr[1] = (*e2).tr[0];
+        e2.tr[0] = t;
+        e3.tr[1] = (*e3).tr[0];
+        e3.tr[0] = t;
+        t.edge[0] = e1;
+        t.edge[1] = e2;
+        t.edge[2] = e3;
+        Some(NonNull::new(t).unwrap())
     }
 
     fn make_convex(
@@ -895,27 +898,28 @@ impl Mesher {
         e2: *mut EdgeNode,
         ret_default: *mut EdgeNode,
     ) -> Option<NonNull<EdgeNode>> {
-        unsafe {
-            let mut d = [Vec2::ZERO; 2];
-            d[0] = (*(*e1).v2).pos - (*(*e1).v1).pos;
-            d[1] = (*(*e2).v2).pos - (*(*e2).v1).pos;
+        let e1 = unsafe { &mut *e1 };
+        let e2 = unsafe { &mut *e2 };
 
-            let cross = d[0].cross(d[1]);
-            if cross <= 0. {
-                return Some(NonNull::new(ret_default).unwrap());
-            }
+        let mut d = [Vec2::ZERO; 2];
+        d[0] = unsafe { (*e1.v2).pos - (*e1.v1).pos };
+        d[1] = unsafe { (*e2.v2).pos - (*e2.v1).pos };
 
-            let Some(n) = self.create_edge((*e1).v1, (*e2).v2) else { return None };
-            let n = n.as_ptr();
-            (*n).detach();
-            (*n).insert_after(e2);
-            self.data.used_edges.reattach(e1);
-            self.data.used_edges.reattach(e2);
-            if self.create_triangle(e1, e2, n).is_none() {
-                return None;
-            }
-            Some(NonNull::new(n).unwrap())
+        let cross = d[0].cross(d[1]);
+        if cross <= 0. {
+            return Some(NonNull::new(ret_default).unwrap());
         }
+
+        let Some(n) = self.create_edge((*e1).v1, (*e2).v2) else { return None };
+        let n = unsafe { &mut *n.as_ptr() };
+        n.detach();
+        n.insert_after(e2);
+        self.data.used_edges.reattach(e1);
+        self.data.used_edges.reattach(e2);
+        if self.create_triangle(e1, e2, n).is_none() {
+            return None;
+        }
+        Some(NonNull::new(n).unwrap())
     }
 
     fn make_convex90(
@@ -924,115 +928,113 @@ impl Mesher {
         e2: *mut EdgeNode,
         ret_default: *mut EdgeNode,
     ) -> Option<NonNull<EdgeNode>> {
-        unsafe {
-            let mut d = [Vec2::ZERO; 2];
-            d[0] = (*(*e1).v2).pos - (*(*e1).v1).pos;
-            d[1] = (*(*e2).v2).pos - (*(*e2).v1).pos;
-            let mut l1 = d[0].length();
-            let mut l2 = d[1].length();
-            l1 = 1.0 / l1;
-            l2 = 1.0 / l2;
-            let as_ = d[0].cross(d[1]) * l1 * l2;
-            let ac = d[0].dot(d[1]) * l1 * l2;
-            if as_ < 0. {
-                return Some(NonNull::new(ret_default).unwrap());
-            }
-            if ac > 0. {
-                return Some(NonNull::new(ret_default).unwrap());
-            }
+        let e1 = unsafe { &mut *e1 };
+        let e2 = unsafe { &mut *e2 };
 
-            let Some(n) = self.create_edge((*e1).v1, (*e2).v2).map(|nn| nn.as_ptr()) else { return None };
-            (*n).detach();
-            (*n).insert_after(e2);
-            self.data.used_edges.reattach(e1);
-            self.data.used_edges.reattach(e2);
-            if self.create_triangle(e1, e2, n).is_none() {
-                return None;
-            }
-            Some(NonNull::new(n).unwrap())
+        let mut d = [Vec2::ZERO; 2];
+        d[0] = unsafe { (*e1.v2).pos - (*e1.v1).pos };
+        d[1] = unsafe { (*e2.v2).pos - (*e2.v1).pos };
+        let mut l1 = d[0].length();
+        let mut l2 = d[1].length();
+        l1 = 1.0 / l1;
+        l2 = 1.0 / l2;
+        let as_ = d[0].cross(d[1]) * l1 * l2;
+        let ac = d[0].dot(d[1]) * l1 * l2;
+        if as_ < 0. {
+            return Some(NonNull::new(ret_default).unwrap());
         }
+        if ac > 0. {
+            return Some(NonNull::new(ret_default).unwrap());
+        }
+
+        let Some(n) = self.create_edge((*e1).v1, (*e2).v2).map(|nn| nn.as_ptr()) else { return None };
+        let n = unsafe { &mut *n };
+        (*n).detach();
+        (*n).insert_after(e2);
+        self.data.used_edges.reattach(e1);
+        self.data.used_edges.reattach(e2);
+        if self.create_triangle(e1, e2, n).is_none() {
+            return None;
+        }
+        Some(NonNull::new(n).unwrap())
     }
 
     /// Attempt to optimize the entire graph
     fn optimize_all(&mut self, deep: i32, object: usize) -> Result<(), TriangulatorError> {
-        unsafe {
-            let mut e = self.data.used_edges.next();
-            while e != &mut self.data.used_edges {
-                let opt = e;
-                e = (*e).next();
-                if (*(*opt).v1).object != object {
-                    continue;
-                };
-                self.optimize(opt, deep)?;
-            }
-            Ok(())
+        let mut e = self.data.used_edges.next();
+        while e != &mut self.data.used_edges {
+            let opt = e;
+            e = unsafe { (*e).next() };
+            if unsafe { (*(*opt).v1).object } != object {
+                continue;
+            };
+            self.optimize(opt, deep)?;
         }
+        Ok(())
     }
 
     fn optimize(&mut self, e: *mut EdgeNode, mut deep: i32) -> Result<(), TriangulatorError> {
-        unsafe {
-            if deep <= 0 || (*e).tr[1] == std::ptr::null_mut() {
-                return Ok(());
-            }
-            if (*e).is_contour_edge() {
-                return Ok(());
-            };
+        let e = unsafe { &mut *e };
 
-            let o0 = (*(*e).tr[0]).opposite_vert(e);
-            let o1 = (*(*e).tr[1]).opposite_vert(e);
-
-            // Let's check the quadrilateral for convexity (convexes are already optimal according to Delaunay)
-            if !is_convex_quad((*e).v1, o0, (*e).v2, o1) {
-                return Ok(());
-            }
-
-            let mut done1 = true;
-            if (*(*e).tr[0]).cc.radius == 0. {
-                done1 &= (*(*e).tr[0])
-                    .cc
-                    .calculate((*(*e).v1).pos, (*o0).pos, (*(*e).v2).pos);
-            };
-            if (*(*e).tr[1]).cc.radius == 0. {
-                done1 &= (*(*e).tr[1])
-                    .cc
-                    .calculate((*(*e).v1).pos, (*o1).pos, (*(*e).v2).pos)
-            };
-
-            let mut done2 = true;
-            if (*e).alt_cc[0].radius == 0. {
-                done2 &= (*e).alt_cc[0].calculate((*o0).pos, (*(*e).v1).pos, (*o1).pos);
-            };
-            if (*e).alt_cc[1].radius == 0. {
-                done2 &= (*e).alt_cc[1].calculate((*o0).pos, (*(*e).v2).pos, (*o1).pos);
-            };
-
-            if !done2 {
-                return Ok(());
-            }
-
-            if done1 && done2 {
-                if Circumcircle::bigger_combined_radius(
-                    &(*e).alt_cc[0],
-                    &(*e).alt_cc[1],
-                    &(*(*e).tr[0]).cc,
-                    &(*(*e).tr[1]).cc,
-                ) {
-                    return Ok(());
-                }
-            }
-
-            self.flip_edge(e)?;
-
-            deep -= 1;
-            if deep == 0 {
-                return Ok(());
-            }
-            self.optimize((*(*e).tr[0]).second_edge(e), deep)?;
-            self.optimize((*(*e).tr[1]).second_edge(e), deep)?;
-            self.optimize((*(*e).tr[0]).third_edge(e), deep)?;
-            self.optimize((*(*e).tr[1]).third_edge(e), deep)?;
-            Ok(())
+        if deep <= 0 || e.tr[1] == std::ptr::null_mut() {
+            return Ok(());
         }
+        if e.is_contour_edge() {
+            return Ok(());
+        };
+
+        let o0 = unsafe { &mut *(*e.tr[0]).opposite_vert(e) };
+        let o1 = unsafe { &mut *(*e.tr[1]).opposite_vert(e) };
+
+        // Let's check the quadrilateral for convexity (convexes are already optimal according to Delaunay)
+        if !is_convex_quad(e.v1, o0, e.v2, o1) {
+            return Ok(());
+        }
+
+        let v1 = unsafe { &mut *e.v1 };
+        let v2 = unsafe { &mut *e.v2 };
+        let tr0 = unsafe { &mut *e.tr[0] };
+        let tr1 = unsafe { &mut *e.tr[1] };
+
+        let mut done1 = true;
+        if tr0.cc.radius == 0. {
+            done1 &= tr0.cc.calculate(v1.pos, o0.pos, v2.pos);
+        };
+        if tr1.cc.radius == 0. {
+            done1 &= tr1.cc.calculate(v1.pos, o1.pos, v2.pos)
+        };
+
+        let mut done2 = true;
+        if (*e).alt_cc[0].radius == 0. {
+            done2 &= e.alt_cc[0].calculate(o0.pos, v1.pos, o1.pos);
+        };
+        if (*e).alt_cc[1].radius == 0. {
+            done2 &= e.alt_cc[1].calculate(o0.pos, v2.pos, o1.pos);
+        };
+
+        if !done2 {
+            return Ok(());
+        }
+
+        if done1 && done2 {
+            if Circumcircle::bigger_combined_radius(&e.alt_cc[0], &e.alt_cc[1], &tr0.cc, &tr1.cc) {
+                return Ok(());
+            }
+        }
+
+        self.flip_edge(e)?;
+
+        deep -= 1;
+        if deep == 0 {
+            return Ok(());
+        }
+        unsafe {
+            self.optimize((*e.tr[0]).second_edge(e), deep)?;
+            self.optimize((*e.tr[1]).second_edge(e), deep)?;
+            self.optimize((*e.tr[0]).third_edge(e), deep)?;
+            self.optimize((*e.tr[1]).third_edge(e), deep)?;
+        }
+        Ok(())
     }
 
     fn flip_edge(&mut self, e: *mut EdgeNode) -> Result<(), TriangulatorError> {
@@ -1046,43 +1048,42 @@ impl Mesher {
         //      \|/                      \ /
         //      v2
 
-        unsafe {
-            let mut t0 = (*e).tr[0];
-            let mut t1 = (*e).tr[1];
-            let mut a = (*t0).second_edge(e);
-            let mut b = (*t0).third_edge(e);
-            let mut c = (*t1).second_edge(e);
-            let mut d = (*t1).third_edge(e);
-            if !(*a).has_vert((*e).v1) {
-                swap(&mut a, &mut b);
-            }
-            if !(*c).has_vert((*e).v1) {
-                swap(&mut c, &mut d);
-            }
-            let aa = (*a).common_vert(b);
-            let bb = (*c).common_vert(d);
-
-            let t0copy = *t0;
-            let t1copy = *t1;
-            let ecopy = *e;
-            self.free_triangle(t0, false);
-            self.free_triangle(t1, false);
-            self.change_edge(e, aa, bb);
-            let Some(t0_) = self.create_triangle(a, c, e).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
-            t0 = t0_;
-            let Some(t1_) = self.create_triangle(b, d, e).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
-            t1 = t1_;
-
-            // Restoring fields after recreating
-            (*t0).helper = t0copy.helper;
-            (*t1).helper = t1copy.helper;
-            (*t0).cc = ecopy.alt_cc[0];
-            (*t1).cc = ecopy.alt_cc[1];
-            (*e).alt_cc[0] = t1copy.cc; // flip copy!
-            (*e).alt_cc[1] = t0copy.cc;
-
-            Ok(())
+        let e = unsafe { &mut *e };
+        let mut t0 = unsafe { &mut *e.tr[0] };
+        let mut t1 = unsafe { &mut *e.tr[1] };
+        let mut a = unsafe { &mut *t0.second_edge(e) };
+        let mut b = unsafe { &mut *t0.third_edge(e) };
+        let mut c = unsafe { &mut *t1.second_edge(e) };
+        let mut d = unsafe { &mut *t1.third_edge(e) };
+        if !a.has_vert(e.v1) {
+            swap(&mut a, &mut b);
         }
+        if !c.has_vert(e.v1) {
+            swap(&mut c, &mut d);
+        }
+        let aa = (*a).common_vert(b);
+        let bb = (*c).common_vert(d);
+
+        let t0copy = *t0;
+        let t1copy = *t1;
+        let ecopy = *e;
+        self.free_triangle(t0, false);
+        self.free_triangle(t1, false);
+        self.change_edge(e, aa, bb);
+        let Some(t0_) = self.create_triangle(a, c, e).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+        t0 = unsafe { &mut *t0_ };
+        let Some(t1_) = self.create_triangle(b, d, e).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+        t1 = unsafe { &mut *t1_ };
+
+        // Restoring fields after recreating
+        t0.helper = t0copy.helper;
+        t1.helper = t1copy.helper;
+        t0.cc = ecopy.alt_cc[0];
+        t1.cc = ecopy.alt_cc[1];
+        e.alt_cc[0] = t1copy.cc; // flip copy!
+        e.alt_cc[1] = t0copy.cc;
+
+        Ok(())
     }
 
     fn free_triangle(&mut self, t: *mut TriangleNode, and_bare_edges: bool) {
@@ -1149,13 +1150,12 @@ impl Mesher {
     }
 
     fn change_edge(&mut self, e: *mut EdgeNode, v1: *mut Vertex, v2: *mut Vertex) {
-        unsafe {
-            let prev = (*e).prev();
-            self.free_edge(e);
-            self.create_edge(v1, v2);
-            (*e).detach();
-            (*e).insert_after(prev);
-        }
+        let e = unsafe { &mut *e };
+        let prev = e.prev();
+        self.free_edge(e);
+        self.create_edge(v1, v2);
+        e.detach();
+        e.insert_after(prev);
     }
 
     /// Function for successive insertion of structural segments
@@ -1651,31 +1651,29 @@ fn is_convex_quad(
     cc: *const Vertex,
     dd: *const Vertex,
 ) -> bool {
-    unsafe {
-        let mut v = [Vec2::ZERO; 4];
-        let mut z = [0.; 4];
-        v[0] = (*bb).pos - (*aa).pos;
-        v[1] = (*cc).pos - (*bb).pos;
-        v[2] = (*dd).pos - (*cc).pos;
-        v[3] = (*aa).pos - (*dd).pos;
-        z[0] = v[0].cross(v[1]);
-        z[1] = v[1].cross(v[2]);
-        z[2] = v[2].cross(v[3]);
-        z[3] = v[3].cross(v[0]);
-        if z[0] * z[1] <= 0. {
-            return false;
-        };
-        if z[1] * z[2] <= 0. {
-            return false;
-        };
-        if z[2] * z[3] <= 0. {
-            return false;
-        };
-        if z[3] * z[0] <= 0. {
-            return false;
-        };
-        return true;
-    }
+    let mut v = [Vec2::ZERO; 4];
+    let mut z = [0.; 4];
+    v[0] = unsafe { (*bb).pos - (*aa).pos };
+    v[1] = unsafe { (*cc).pos - (*bb).pos };
+    v[2] = unsafe { (*dd).pos - (*cc).pos };
+    v[3] = unsafe { (*aa).pos - (*dd).pos };
+    z[0] = v[0].cross(v[1]);
+    z[1] = v[1].cross(v[2]);
+    z[2] = v[2].cross(v[3]);
+    z[3] = v[3].cross(v[0]);
+    if z[0] * z[1] <= 0. {
+        return false;
+    };
+    if z[1] * z[2] <= 0. {
+        return false;
+    };
+    if z[2] * z[3] <= 0. {
+        return false;
+    };
+    if z[3] * z[0] <= 0. {
+        return false;
+    };
+    return true;
 }
 
 fn find_edge(v1: *mut Vertex, v2: *mut Vertex) -> *mut EdgeNode {
