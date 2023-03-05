@@ -266,7 +266,6 @@ pub(crate) struct Mesher {
 mod data {
     use std::{
         alloc::{alloc, Layout},
-        marker::PhantomPinned,
         mem::MaybeUninit,
     };
 
@@ -275,9 +274,6 @@ mod data {
     /// Data required for the mesher to work. Creates itself pinned, so it's safe to create a
     /// pointer to any member of this struct. This matches the functionality of the original
     /// ttf2mesh library which does the same thing.
-    ///
-    /// TODO: Many of the functions in this struct have interior mutability hacks that should be
-    /// cleaned up.
     pub(super) struct MesherData {
         /// Length of maxv
         pub(super) max_vertices: usize,
@@ -303,8 +299,6 @@ mod data {
         pub(super) free_vertex_to_edges: VertexToEdgeNode,
         /// Two initialisation points along the lower edge of the glyph
         pub(super) initial_vertices: [Vertex; 2],
-        // Forbid unpinning
-        _pin: PhantomPinned,
     }
 
     impl MesherData {
@@ -348,7 +342,6 @@ mod data {
                     used_triangles: TriangleNode::default(),
                     free_vertex_to_edges: VertexToEdgeNode::default(),
                     initial_vertices: [Vertex::default(), Vertex::default()],
-                    _pin: PhantomPinned::default(),
                 });
 
                 // Initialize lists
@@ -406,29 +399,6 @@ mod data {
             let mut s_vec = unsafe { Vec::from_raw_parts(s, nv, nv) };
             s_vec.sort_by(|a, b| unsafe { Vertex::sort_by_y(a, b) });
             Vec::leak(s_vec);
-        }
-
-        pub(super) fn free_edges(&self) -> &mut EdgeNode {
-            unsafe { &mut *(&self.free_edges as *const EdgeNode as *mut EdgeNode) }
-        }
-
-        pub(super) fn used_edges(&self) -> &mut EdgeNode {
-            unsafe { &mut *(&self.used_edges as *const EdgeNode as *mut EdgeNode) }
-        }
-
-        pub(super) fn free_triangles(&self) -> &mut TriangleNode {
-            unsafe { &mut *(&self.free_triangles as *const TriangleNode as *mut TriangleNode) }
-        }
-
-        pub(super) fn used_triangles(&self) -> &mut TriangleNode {
-            unsafe { &mut *(&self.used_triangles as *const TriangleNode as *mut TriangleNode) }
-        }
-
-        pub(super) fn free_vertex_to_edges(&self) -> &mut VertexToEdgeNode {
-            unsafe {
-                &mut *(&self.free_vertex_to_edges as *const VertexToEdgeNode
-                    as *mut VertexToEdgeNode)
-            }
         }
 
         pub(super) fn initial_vertex(&self, n: usize) -> &mut Vertex {
@@ -775,7 +745,7 @@ impl Mesher {
                 (*r).detach();
                 (*l).insert_after(curr);
                 (*r).insert_after(l);
-                self.data.used_edges().reattach(curr);
+                self.data.used_edges.reattach(curr);
 
                 // Register a triangle on all three edges
                 if self.create_triangle(l, r, curr).is_none() {
@@ -841,7 +811,7 @@ impl Mesher {
             while !convx.empty() {
                 let e = convx.next();
                 (*e).detach();
-                self.data.used_edges().attach(e);
+                self.data.used_edges.attach(e);
             }
 
             Ok(())
@@ -850,12 +820,12 @@ impl Mesher {
 
     fn create_edge(&mut self, v1: *mut Vertex, v2: *mut Vertex) -> Option<NonNull<EdgeNode>> {
         unsafe {
-            if self.data.free_edges().empty() || self.data.free_vertex_to_edges().empty() {
+            if self.data.free_edges.empty() || self.data.free_vertex_to_edges.empty() {
                 return None;
             }
-            let res = self.data.free_edges().first();
+            let res = self.data.free_edges.first();
             (*res).detach();
-            self.data.used_edges().attach(res);
+            self.data.used_edges.attach(res);
             (*res).v1 = v1;
             (*res).v2 = v2;
             (*res).alt_cc[0] = Circumcircle::default();
@@ -874,10 +844,10 @@ impl Mesher {
         e: *mut EdgeNode,
     ) -> Option<NonNull<VertexToEdgeNode>> {
         unsafe {
-            if self.data.free_vertex_to_edges().empty() {
+            if self.data.free_vertex_to_edges.empty() {
                 return None;
             }
-            let res = self.data.free_vertex_to_edges().first();
+            let res = self.data.free_vertex_to_edges.first();
             (*res).detach();
             (*v).edges.attach(res);
             (*res).edge = e;
@@ -898,12 +868,12 @@ impl Mesher {
             {
                 return None;
             }
-            if self.data.free_triangles().empty() {
+            if self.data.free_triangles.empty() {
                 return None;
             }
-            let t = self.data.free_triangles().first();
+            let t = self.data.free_triangles.first();
             (*t).detach();
-            self.data.used_triangles().attach(t);
+            self.data.used_triangles.attach(t);
             (*t).helper = -1;
             (*t).cc = Circumcircle::default();
             (*e1).tr[1] = (*e1).tr[0];
@@ -939,8 +909,8 @@ impl Mesher {
             let n = n.as_ptr();
             (*n).detach();
             (*n).insert_after(e2);
-            self.data.used_edges().reattach(e1);
-            self.data.used_edges().reattach(e2);
+            self.data.used_edges.reattach(e1);
+            self.data.used_edges.reattach(e2);
             if self.create_triangle(e1, e2, n).is_none() {
                 return None;
             }
@@ -974,8 +944,8 @@ impl Mesher {
             let Some(n) = self.create_edge((*e1).v1, (*e2).v2).map(|nn| nn.as_ptr()) else { return None };
             (*n).detach();
             (*n).insert_after(e2);
-            self.data.used_edges().reattach(e1);
-            self.data.used_edges().reattach(e2);
+            self.data.used_edges.reattach(e1);
+            self.data.used_edges.reattach(e2);
             if self.create_triangle(e1, e2, n).is_none() {
                 return None;
             }
@@ -986,8 +956,8 @@ impl Mesher {
     /// Attempt to optimize the entire graph
     fn optimize_all(&mut self, deep: i32, object: usize) -> Result<(), TriangulatorError> {
         unsafe {
-            let mut e = self.data.used_edges().next();
-            while e != self.data.used_edges() {
+            let mut e = self.data.used_edges.next();
+            while e != &mut self.data.used_edges {
                 let opt = e;
                 e = (*e).next();
                 if (*(*opt).v1).object != object {
@@ -1145,7 +1115,7 @@ impl Mesher {
                 self.free_edge((*t).edge[2]);
             }
             (*t).detach();
-            self.data.free_triangles().attach(t);
+            self.data.free_triangles.attach(t);
         }
     }
 
@@ -1158,7 +1128,7 @@ impl Mesher {
             while l != &mut (*(*e).v1).edges {
                 if (*l).edge == e {
                     (*l).detach();
-                    self.data.free_vertex_to_edges().attach(l);
+                    self.data.free_vertex_to_edges.attach(l);
                     break;
                 }
                 l = (*l).next();
@@ -1167,13 +1137,13 @@ impl Mesher {
             while l != &mut (*(*e).v2).edges {
                 if (*l).edge == e {
                     (*l).detach();
-                    self.data.free_vertex_to_edges().attach(l);
+                    self.data.free_vertex_to_edges.attach(l);
                     break;
                 }
                 l = (*l).next();
             }
             (*e).detach();
-            self.data.free_edges().attach(e);
+            self.data.free_edges.attach(e);
             return true;
         }
     }
@@ -1359,7 +1329,7 @@ impl Mesher {
     ) -> Result<(), TriangulatorError> {
         unsafe {
             if (*cntr).next() == cntr {
-                self.data.used_edges().reattach(cntr);
+                self.data.used_edges.reattach(cntr);
                 return Ok(());
             }
 
@@ -1367,8 +1337,8 @@ impl Mesher {
             if (*(*cntr).next()).next() == cntr {
                 let Some(t) = self.create_triangle(cntr, (*cntr).next(), base).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
                 // And let's return the mesher's edges from the outline
-                self.data.used_edges().reattach((*t).edge[0]);
-                self.data.used_edges().reattach((*t).edge[1]);
+                self.data.used_edges.reattach((*t).edge[0]);
+                self.data.used_edges.reattach((*t).edge[1]);
                 return Ok(());
             }
 
@@ -1574,7 +1544,7 @@ impl Mesher {
                 if (*tmp).helper == 0 {
                     self.free_triangle(tmp, true);
                 } else {
-                    self.data.used_triangles().reattach(tmp);
+                    self.data.used_triangles.reattach(tmp);
                 }
             }
 
@@ -1590,8 +1560,8 @@ impl Mesher {
         for i in 0..self.nv {
             vert.push(self.data.vertex(i).pos);
         }
-        let mut t = self.data.used_triangles().next();
-        while t != self.data.used_triangles() as *const TriangleNode as *mut TriangleNode {
+        let mut t = self.data.used_triangles.next();
+        while t != &self.data.used_triangles as *const TriangleNode as *mut TriangleNode {
             unsafe {
                 if (*(*t).edge[1]).is_contour_edge() {
                     swap(&mut (*t).edge[0], &mut (*t).edge[1])
