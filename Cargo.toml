@@ -10,3 +10,7 @@ snafu = "0.7"
 byteorder = "1.4"
 macroquad = "0.3"
 ttf-parser = "0.18"
+
+[features]
+default = []
+original_algorithm = []

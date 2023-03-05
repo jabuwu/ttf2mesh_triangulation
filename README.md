@@ -1,6 +1,8 @@
 # ttf2mesh_triangulation
 
-Triangulation code ripped from [ttf2mesh](https://github.com/fetisov/ttf2mesh) and ported to Rust. Produces the same exact results as ttf2mesh.
+Triangulation code ripped from [ttf2mesh](https://github.com/fetisov/ttf2mesh) and ported to Rust.
+
+Provides fixes for the original ttf2mesh algorithm, or produces the same exact results if using the `original_algorithm` feature.
 
 ## Example
 
@@ -39,9 +41,9 @@ fn main() {
 }
 ```
 
-## Running the test
+## Running the ttf2mesh equality test
 
-The only test included in this repo is one which checks byte-for-byte equality with ttf2mesh. It checks 11165 glyphs from two separate fonts. The test file is 100MB so it's not included in the git repo, and must be generated. More test fonts can be added easily in `test_gen/ttf2mesh_test_data_gen.c`.
+A test included in this repo checks byte-for-byte equality with ttf2mesh. It checks 11165 glyphs from two separate fonts. The test file is 100MB so it's not included in the git repo, and must be generated. More test fonts can be added easily in `test_gen/ttf2mesh_test_data_gen.c`.
 
 ```
 cd test_gen
@@ -55,5 +57,5 @@ cmake .. -DCMAKE_BUILD_TYPE=RELEASE
 make
 ./ttf2mesh_test_data_gen
 cd ../..
-cargo test --release
+cargo test --release --features original_algorithm
 ```

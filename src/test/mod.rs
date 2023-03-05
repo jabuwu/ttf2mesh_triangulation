@@ -1,14 +1,15 @@
-use std::{
-    io::Cursor,
-    time::{Duration, Instant},
-};
-
-use byteorder::{LittleEndian, ReadBytesExt};
-
-use crate::Triangulator;
-
+#[cfg(feature = "original_algorithm")]
 #[test]
 fn test_data() {
+    use std::{
+        io::Cursor,
+        time::{Duration, Instant},
+    };
+
+    use byteorder::{LittleEndian, ReadBytesExt};
+
+    use crate::Triangulator;
+
     let mut cursor = Cursor::new(include_bytes!("./test_data.bin"));
     let mut time = 0;
     let mut count = 0;

@@ -165,6 +165,65 @@ impl Default for Circumcircle {
     }
 }
 
+impl Circumcircle {
+    // Checks if the combined radius of (a1, a2) is larger than (b1, b2).
+    //
+    // The original algorithm adds `EPISILON` and does a `>` check, which can cause the algorithm to
+    // ping-pong between two candidates, and perform unnecessary work. The new algorithm checks for
+    // exact equality, which removes this ping-pong.
+    fn bigger_combined_radius(
+        a1: &Circumcircle,
+        a2: &Circumcircle,
+        b1: &Circumcircle,
+        b2: &Circumcircle,
+    ) -> bool {
+        #[cfg(feature = "original_algorithm")]
+        {
+            a1.radius + a2.radius + EPSILON > b1.radius + b2.radius
+        }
+        #[cfg(not(feature = "original_algorithm"))]
+        {
+            a1.radius + a2.radius >= b1.radius + b2.radius
+        }
+    }
+
+    fn calculate(&mut self, aa: Vec2, bb: Vec2, cc: Vec2) -> bool {
+        //   { (o[0] - A[0])^2 + (o[1] - A[1])^2 = r^2
+        //   { (o[0] - B[0])^2 + (o[1] - B[1])^2 = r^2
+        //   { (o[0] - C[0])^2 + (o[1] - C[1])^2 = r^2
+        //
+        // _ { o[0]^2 - 2 o[0] A[0] + A[0]^2   +   o[1]^2 - 2 o[1] A[1] + A[1]^2   =   r^2
+        // _ { o[0]^2 - 2 o[0] B[0] + B[0]^2   +   o[1]^2 - 2 o[1] B[1] + B[1]^2   =   r^2
+        //   { o[0]^2 - 2 o[0] C[0] + C[0]^2   +   o[1]^2 - 2 o[1] C[1] + C[1]^2   =   r^2
+        //
+        //   { o[0] 2 (A[0] - B[0]) + o[1] 2 (A[1] - B[1]) = A[0]^2 + A[1]^2 - B[0]^2 - B[1]^2
+        //   { o[0] 2 (B[0] - C[0]) + o[1] 2 (B[1] - C[1]) = B[0]^2 + B[1]^2 - C[0]^2 - C[1]^2
+
+        let mut a = [0.; 4];
+        let mut b = [0.; 2];
+        a[0] = (aa[0] - bb[0]) * 2.0;
+        a[1] = (aa[1] - bb[1]) * 2.0;
+        a[2] = (bb[0] - cc[0]) * 2.0;
+        a[3] = (bb[1] - cc[1]) * 2.0;
+        b[0] = aa[0] * aa[0] + aa[1] * aa[1] - bb[0] * bb[0] - bb[1] * bb[1];
+        b[1] = bb[0] * bb[0] + bb[1] * bb[1] - cc[0] * cc[0] - cc[1] * cc[1];
+
+        // linsolver of: a * XY = c
+        let det = a[0] * a[3] - a[1] * a[2];
+        if det.abs() <= EPSILON {
+            return false;
+        }
+        self.center[0] = (b[0] * a[3] - a[1] * b[1]) / det;
+        self.center[1] = (a[0] * b[1] - b[0] * a[2]) / det;
+
+        // calc r
+        let dx = aa[0] - self.center[0];
+        let dy = aa[1] - self.center[1];
+        self.radius = (dx * dx + dy * dy).sqrt();
+        return true;
+    }
+}
+
 /// Cramer's rule for 2x2 system
 macro_rules! cramer2X2 {
     ($x:expr, $y:expr, $a11:expr, $a12:expr, $c1:expr, $a21:expr, $a22:expr, $c2:expr) => {{
@@ -875,30 +934,22 @@ impl Mesher {
 
             let mut done1 = true;
             if (*(*e).tr[0]).cc.radius == 0. {
-                done1 &= calc_circumcircle(
-                    (*(*e).v1).pos,
-                    (*o0).pos,
-                    (*(*e).v2).pos,
-                    &mut (*(*e).tr[0]).cc,
-                )
+                done1 &= (*(*e).tr[0])
+                    .cc
+                    .calculate((*(*e).v1).pos, (*o0).pos, (*(*e).v2).pos);
             };
             if (*(*e).tr[1]).cc.radius == 0. {
-                done1 &= calc_circumcircle(
-                    (*(*e).v1).pos,
-                    (*o1).pos,
-                    (*(*e).v2).pos,
-                    &mut (*(*e).tr[1]).cc,
-                )
+                done1 &= (*(*e).tr[1])
+                    .cc
+                    .calculate((*(*e).v1).pos, (*o1).pos, (*(*e).v2).pos)
             };
 
             let mut done2 = true;
             if (*e).alt_cc[0].radius == 0. {
-                done2 &=
-                    calc_circumcircle((*o0).pos, (*(*e).v1).pos, (*o1).pos, &mut (*e).alt_cc[0])
+                done2 &= (*e).alt_cc[0].calculate((*o0).pos, (*(*e).v1).pos, (*o1).pos);
             };
             if (*e).alt_cc[1].radius == 0. {
-                done2 &=
-                    calc_circumcircle((*o0).pos, (*(*e).v2).pos, (*o1).pos, &mut (*e).alt_cc[1])
+                done2 &= (*e).alt_cc[1].calculate((*o0).pos, (*(*e).v2).pos, (*o1).pos);
             };
 
             if !done2 {
@@ -906,9 +957,12 @@ impl Mesher {
             }
 
             if done1 && done2 {
-                if (*e).alt_cc[0].radius + (*e).alt_cc[1].radius + EPSILON
-                    > (*(*e).tr[0]).cc.radius + (*(*e).tr[1]).cc.radius
-                {
+                if Circumcircle::bigger_combined_radius(
+                    &(*e).alt_cc[0],
+                    &(*e).alt_cc[1],
+                    &(*(*e).tr[0]).cc,
+                    &(*(*e).tr[1]).cc,
+                ) {
                     return Ok(());
                 }
             }
@@ -1566,42 +1620,6 @@ fn is_convex_quad(
         };
         return true;
     }
-}
-
-fn calc_circumcircle(aa: Vec2, bb: Vec2, cc: Vec2, mcc: &mut Circumcircle) -> bool {
-    //   { (o[0] - A[0])^2 + (o[1] - A[1])^2 = r^2
-    //   { (o[0] - B[0])^2 + (o[1] - B[1])^2 = r^2
-    //   { (o[0] - C[0])^2 + (o[1] - C[1])^2 = r^2
-    //
-    // _ { o[0]^2 - 2 o[0] A[0] + A[0]^2   +   o[1]^2 - 2 o[1] A[1] + A[1]^2   =   r^2
-    // _ { o[0]^2 - 2 o[0] B[0] + B[0]^2   +   o[1]^2 - 2 o[1] B[1] + B[1]^2   =   r^2
-    //   { o[0]^2 - 2 o[0] C[0] + C[0]^2   +   o[1]^2 - 2 o[1] C[1] + C[1]^2   =   r^2
-    //
-    //   { o[0] 2 (A[0] - B[0]) + o[1] 2 (A[1] - B[1]) = A[0]^2 + A[1]^2 - B[0]^2 - B[1]^2
-    //   { o[0] 2 (B[0] - C[0]) + o[1] 2 (B[1] - C[1]) = B[0]^2 + B[1]^2 - C[0]^2 - C[1]^2
-
-    let mut a = [0.; 4];
-    let mut b = [0.; 2];
-    a[0] = (aa[0] - bb[0]) * 2.0;
-    a[1] = (aa[1] - bb[1]) * 2.0;
-    a[2] = (bb[0] - cc[0]) * 2.0;
-    a[3] = (bb[1] - cc[1]) * 2.0;
-    b[0] = aa[0] * aa[0] + aa[1] * aa[1] - bb[0] * bb[0] - bb[1] * bb[1];
-    b[1] = bb[0] * bb[0] + bb[1] * bb[1] - cc[0] * cc[0] - cc[1] * cc[1];
-
-    // linsolver of: a * XY = c
-    let det = a[0] * a[3] - a[1] * a[2];
-    if det.abs() <= EPSILON {
-        return false;
-    }
-    mcc.center[0] = (b[0] * a[3] - a[1] * b[1]) / det;
-    mcc.center[1] = (a[0] * b[1] - b[0] * a[2]) / det;
-
-    // calc r
-    let dx = aa[0] - mcc.center[0];
-    let dy = aa[1] - mcc.center[1];
-    mcc.radius = (dx * dx + dy * dy).sqrt();
-    return true;
 }
 
 fn find_edge(v1: *mut Vertex, v2: *mut Vertex) -> *mut EdgeNode {
