@@ -391,47 +391,47 @@ mod data {
             }
         }
 
-        pub fn vertex(&self, n: usize) -> &mut Vertex {
+        pub(super) fn vertex(&self, n: usize) -> &mut Vertex {
             assert!(n < self.max_vertices);
             unsafe { &mut *(self.vertex_pool.add(n)) }
         }
 
-        pub fn sorted_by_y_vertex(&self, n: usize) -> *mut *mut Vertex {
+        pub(super) fn sorted_by_y_vertex(&self, n: usize) -> *mut *mut Vertex {
             assert!(n < self.max_vertices);
             unsafe { self.sorted_by_y_vertices.add(n) }
         }
 
-        pub fn sort_s(&self, nv: usize) {
+        pub(super) fn sort_by_y(&self, nv: usize) {
             let s = self.sorted_by_y_vertices;
             let mut s_vec = unsafe { Vec::from_raw_parts(s, nv, nv) };
             s_vec.sort_by(|a, b| unsafe { Vertex::sort_by_y(a, b) });
             Vec::leak(s_vec);
         }
 
-        pub fn free_edges(&self) -> &mut EdgeNode {
+        pub(super) fn free_edges(&self) -> &mut EdgeNode {
             unsafe { &mut *(&self.free_edges as *const EdgeNode as *mut EdgeNode) }
         }
 
-        pub fn used_edges(&self) -> &mut EdgeNode {
+        pub(super) fn used_edges(&self) -> &mut EdgeNode {
             unsafe { &mut *(&self.used_edges as *const EdgeNode as *mut EdgeNode) }
         }
 
-        pub fn free_triangles(&self) -> &mut TriangleNode {
+        pub(super) fn free_triangles(&self) -> &mut TriangleNode {
             unsafe { &mut *(&self.free_triangles as *const TriangleNode as *mut TriangleNode) }
         }
 
-        pub fn used_triangles(&self) -> &mut TriangleNode {
+        pub(super) fn used_triangles(&self) -> &mut TriangleNode {
             unsafe { &mut *(&self.used_triangles as *const TriangleNode as *mut TriangleNode) }
         }
 
-        pub fn free_vertex_to_edges(&self) -> &mut VertexToEdgeNode {
+        pub(super) fn free_vertex_to_edges(&self) -> &mut VertexToEdgeNode {
             unsafe {
                 &mut *(&self.free_vertex_to_edges as *const VertexToEdgeNode
                     as *mut VertexToEdgeNode)
             }
         }
 
-        pub fn initial_vertex(&self, n: usize) -> &mut Vertex {
+        pub(super) fn initial_vertex(&self, n: usize) -> &mut Vertex {
             assert!(n < 2);
             unsafe { &mut *(&self.initial_vertices[n] as *const Vertex as *mut Vertex) }
         }
@@ -491,7 +491,7 @@ impl Mesher {
         let nv = v_len;
 
         // Sort the vertex array by y-coordinate
-        data.sort_s(nv);
+        data.sort_by_y(nv);
 
         // Initialize the initial edge. To do this, find boundbox by the set of points and make an
         // edge on its lower boundary with a margin */
@@ -609,7 +609,7 @@ impl Mesher {
             }
             // Sort the vertex array by y-coordinate
             if need_resorting {
-                self.data.sort_s(self.nv);
+                self.data.sort_by_y(self.nv);
             }
 
             // Try to deal with loop kinks like this:
