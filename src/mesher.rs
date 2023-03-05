@@ -28,6 +28,29 @@ impl Default for Vertex {
     }
 }
 
+impl Vertex {
+    /// # Safety `a` and `b` must be valid pointers
+    unsafe fn sort_by_y(a: &*mut Vertex, b: &*mut Vertex) -> Ordering {
+        let v1 = (**a).pos;
+        let v2 = (**b).pos;
+        if v1.y == v2.y {
+            if v1.x == v2.x {
+                Ordering::Equal
+            } else if v1.x > v2.x {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        } else {
+            if v1.y > v2.y {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Edge {
     v1: *mut Vertex,
@@ -236,63 +259,196 @@ macro_rules! cramer2X2 {
 pub(crate) struct Mesher {
     /// Actual number of vertices (may be less than maxv)
     nv: usize,
-    /// Vertex pool, length of maxv
-    v: Pin<Vec<Vertex>>,
-    /// Edge pool, length of maxe
-    _e: Pin<Vec<EdgeNode>>,
-    /// Triangle pool, length of maxt
-    _t: Pin<Vec<TriangleNode>>,
-    /// Vertex->edge pool, length of (2 * maxe)
-    _l: Pin<Vec<VertexToEdgeNode>>,
-    /// Sorted by (y) array of vertices
-    s: Pin<Vec<*mut Vertex>>,
-    pinned: Pin<Box<MesherPinned>>,
+    /// Mesher data
+    data: Pin<Box<data::MesherData>>,
 }
 
-struct MesherPinned {
-    /// Root of the list of free edges
-    efree: EdgeNode,
-    /// Root of the list of edges used
-    eused: EdgeNode,
-    /// Root of the list of free triangles
-    tfree: TriangleNode,
-    /// Root of the list of triangles used
-    tused: TriangleNode,
-    /// Root of free reference list vertex->edge
-    lfree: VertexToEdgeNode,
-    /// Two initialisation points along the lower edge of the glyph
-    vinit: [Vertex; 2],
+mod data {
+    use std::{
+        alloc::{alloc, Layout},
+        marker::PhantomPinned,
+        mem::MaybeUninit,
+    };
+
+    use super::*;
+
+    /// Data required for the mesher to work. Creates itself pinned, so it's safe to create a
+    /// pointer to any member of this struct. This matches the functionality of the original
+    /// ttf2mesh library which does the same thing.
+    ///
+    /// TODO: Many of the functions in this struct have interior mutability hacks that should be
+    /// cleaned up.
+    pub(super) struct MesherData {
+        /// Length of maxv
+        pub(super) max_vertices: usize,
+        /// Vertex pool, length of maxv
+        pub(super) vertex_pool: *mut Vertex,
+        /// Edge pool, length of maxe
+        pub(super) edge_pool: *mut EdgeNode,
+        /// Triangle pool, length of maxt
+        pub(super) triangle_pool: *mut TriangleNode,
+        /// Vertex->edge pool, length of (2 * maxe)
+        pub(super) vertex_to_edge_pool: *mut VertexToEdgeNode,
+        /// Sorted by (y) array of vertices
+        pub(super) sorted_by_y_vertices: *mut *mut Vertex,
+        /// Root of the list of free edges
+        pub(super) free_edges: EdgeNode,
+        /// Root of the list of edges used
+        pub(super) used_edges: EdgeNode,
+        /// Root of the list of free triangles
+        pub(super) free_triangles: TriangleNode,
+        /// Root of the list of triangles used
+        pub(super) used_triangles: TriangleNode,
+        /// Root of free reference list vertex->edge
+        pub(super) free_vertex_to_edges: VertexToEdgeNode,
+        /// Two initialisation points along the lower edge of the glyph
+        pub(super) initial_vertices: [Vertex; 2],
+        // Forbid unpinning
+        _pin: PhantomPinned,
+    }
+
+    impl MesherData {
+        pub(super) fn new(total_points: usize) -> Pin<Box<Self>> {
+            let maxv = total_points;
+            let maxt = ((maxv + 2) - 3) * 2 + 1;
+            let maxe = maxt * 2 + 1;
+            let maxv2e = maxe * 2;
+
+            let layout = Layout::new::<MesherData>();
+            let (layout, vertices_offset) = layout
+                .extend(Layout::array::<Vertex>(maxv).unwrap())
+                .unwrap();
+            let (layout, edges_offset) = layout
+                .extend(Layout::array::<EdgeNode>(maxe).unwrap())
+                .unwrap();
+            let (layout, triangles_offset) = layout
+                .extend(Layout::array::<TriangleNode>(maxt).unwrap())
+                .unwrap();
+            let (layout, vertex_to_edges_offset) = layout
+                .extend(Layout::array::<VertexToEdgeNode>(maxv2e).unwrap())
+                .unwrap();
+            let (layout, sorted_vertices_offset) = layout
+                .extend(Layout::array::<*mut Vertex>(maxv).unwrap())
+                .unwrap();
+
+            unsafe {
+                let address = alloc(layout);
+                let mesher_data = &mut *(address as *mut MaybeUninit<MesherData>);
+                mesher_data.write(MesherData {
+                    max_vertices: maxv,
+                    vertex_pool: address.add(vertices_offset) as *mut Vertex,
+                    edge_pool: address.add(edges_offset) as *mut EdgeNode,
+                    triangle_pool: address.add(triangles_offset) as *mut TriangleNode,
+                    vertex_to_edge_pool: address.add(vertex_to_edges_offset)
+                        as *mut VertexToEdgeNode,
+                    sorted_by_y_vertices: address.add(sorted_vertices_offset) as *mut *mut Vertex,
+                    free_edges: EdgeNode::default(),
+                    used_edges: EdgeNode::default(),
+                    free_triangles: TriangleNode::default(),
+                    used_triangles: TriangleNode::default(),
+                    free_vertex_to_edges: VertexToEdgeNode::default(),
+                    initial_vertices: [Vertex::default(), Vertex::default()],
+                    _pin: PhantomPinned::default(),
+                });
+
+                // Initialize lists
+                let mut mesher_data = Box::from_raw(address as *mut MesherData);
+                mesher_data.free_edges.init();
+                mesher_data.used_edges.init();
+                mesher_data.free_triangles.init();
+                mesher_data.used_triangles.init();
+                mesher_data.free_vertex_to_edges.init();
+                for i in 0..maxe {
+                    let edge_ptr = mesher_data.edge_pool.add(i) as *mut MaybeUninit<EdgeNode>;
+                    (*edge_ptr).write(EdgeNode::default());
+                    (*edge_ptr)
+                        .assume_init_mut()
+                        .insert_after(mesher_data.free_edges.prev());
+
+                    let v2e_ptr_1 = mesher_data.vertex_to_edge_pool.add(i * 2)
+                        as *mut MaybeUninit<VertexToEdgeNode>;
+                    let v2e_ptr_2 = mesher_data.vertex_to_edge_pool.add(i * 2 + 1)
+                        as *mut MaybeUninit<VertexToEdgeNode>;
+                    (*v2e_ptr_1).write(VertexToEdgeNode::default());
+                    (*v2e_ptr_2).write(VertexToEdgeNode::default());
+                    (*v2e_ptr_1)
+                        .assume_init_mut()
+                        .insert_after(mesher_data.free_vertex_to_edges.prev());
+                    (*v2e_ptr_2)
+                        .assume_init_mut()
+                        .insert_after(mesher_data.free_vertex_to_edges.prev());
+                }
+                for i in 0..maxt {
+                    let triangle_ptr =
+                        mesher_data.triangle_pool.add(i) as *mut MaybeUninit<TriangleNode>;
+                    (*triangle_ptr).write(TriangleNode::default());
+                    (*triangle_ptr)
+                        .assume_init_mut()
+                        .insert_after(mesher_data.free_triangles.prev());
+                }
+
+                Pin::new_unchecked(mesher_data)
+            }
+        }
+
+        pub fn vertex(&self, n: usize) -> &mut Vertex {
+            assert!(n < self.max_vertices);
+            unsafe { &mut *(self.vertex_pool.add(n)) }
+        }
+
+        pub fn sorted_by_y_vertex(&self, n: usize) -> *mut *mut Vertex {
+            assert!(n < self.max_vertices);
+            unsafe { self.sorted_by_y_vertices.add(n) }
+        }
+
+        pub fn sort_s(&self, nv: usize) {
+            let s = self.sorted_by_y_vertices;
+            let mut s_vec = unsafe { Vec::from_raw_parts(s, nv, nv) };
+            s_vec.sort_by(|a, b| unsafe { Vertex::sort_by_y(a, b) });
+            Vec::leak(s_vec);
+        }
+
+        pub fn free_edges(&self) -> &mut EdgeNode {
+            unsafe { &mut *(&self.free_edges as *const EdgeNode as *mut EdgeNode) }
+        }
+
+        pub fn used_edges(&self) -> &mut EdgeNode {
+            unsafe { &mut *(&self.used_edges as *const EdgeNode as *mut EdgeNode) }
+        }
+
+        pub fn free_triangles(&self) -> &mut TriangleNode {
+            unsafe { &mut *(&self.free_triangles as *const TriangleNode as *mut TriangleNode) }
+        }
+
+        pub fn used_triangles(&self) -> &mut TriangleNode {
+            unsafe { &mut *(&self.used_triangles as *const TriangleNode as *mut TriangleNode) }
+        }
+
+        pub fn free_vertex_to_edges(&self) -> &mut VertexToEdgeNode {
+            unsafe {
+                &mut *(&self.free_vertex_to_edges as *const VertexToEdgeNode
+                    as *mut VertexToEdgeNode)
+            }
+        }
+
+        pub fn initial_vertex(&self, n: usize) -> &mut Vertex {
+            assert!(n < 2);
+            unsafe { &mut *(&self.initial_vertices[n] as *const Vertex as *mut Vertex) }
+        }
+    }
 }
 
 impl Mesher {
     pub(crate) fn new(o: &Triangulator) -> Self {
         // Allocate memory and initialize fields
-
-        let maxv = o.total_points;
-        let maxt = ((maxv + 2) - 3) * 2 + 1;
-        let maxe = maxt * 2 + 1;
-        let maxv2e = maxe * 2;
-
-        let mut v: Vec<Vertex> = Vec::new();
-        v.reserve(maxv);
-
-        let mut e: Vec<EdgeNode> = Vec::new();
-        e.reserve(maxe);
-
-        let mut t: Vec<TriangleNode> = Vec::new();
-        t.reserve(maxt);
-
-        let mut l: Vec<VertexToEdgeNode> = Vec::new();
-        l.reserve(maxv2e);
-
-        let mut s: Vec<*mut Vertex> = Vec::new();
-        s.reserve(maxv);
+        let data = data::MesherData::new(o.total_points);
 
         // Filling in the vertices according to outline points
+        let mut v_len = 0;
         for i in 0..o.contours.len() {
             let pt = &o.contours[i].points;
             let len = pt.len();
-            let base = v.len();
+            let base = v_len;
             if len < 3 {
                 continue;
             }
@@ -319,111 +475,54 @@ impl Mesher {
                     is_hole,
                     nested_to,
                     edges: VertexToEdgeNode::default(),
-                    prev_in_contour: unsafe {
-                        v.as_mut_ptr().offset((base + (j + len - 1) % len) as isize)
-                    },
-                    next_in_contour: unsafe {
-                        v.as_mut_ptr().offset((base + (j + 1) % len) as isize)
-                    },
+                    prev_in_contour: data.vertex(base + (j + len - 1) % len) as *mut Vertex,
+                    next_in_contour: data.vertex(base + (j + 1) % len) as *mut Vertex,
                     ..Default::default()
                 };
-                v.push(vertex);
-                let v_len = v.len();
-                s.push(&mut v[v_len - 1]);
-                v[v_len - 1].edges.init();
+                *data.vertex(v_len) = vertex;
+                unsafe {
+                    *data.sorted_by_y_vertex(v_len) = data.vertex(v_len);
+                }
+                v_len += 1;
+                data.vertex(v_len - 1).edges.init();
             }
         }
 
-        let nv = v.len();
+        let nv = v_len;
 
         // Sort the vertex array by y-coordinate
-        s.sort_by(|a, b| unsafe {
-            let v1 = (**a).pos;
-            let v2 = (**b).pos;
-            if v1.y == v2.y {
-                if v1.x == v2.x {
-                    Ordering::Equal
-                } else if v1.x > v2.x {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                }
-            } else {
-                if v1.y > v2.y {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                }
-            }
-        });
-
-        let mut pinned = Pin::new(Box::new(MesherPinned {
-            efree: EdgeNode::default(),
-            eused: EdgeNode::default(),
-            tfree: TriangleNode::default(),
-            tused: TriangleNode::default(),
-            lfree: VertexToEdgeNode::default(),
-            vinit: [Vertex::default(), Vertex::default()],
-        }));
-
-        // Initialize lists
-        pinned.efree.init();
-        pinned.eused.init();
-        pinned.tfree.init();
-        pinned.tused.init();
-        pinned.lfree.init();
-        for i in 0..maxe {
-            e.push(EdgeNode::default());
-            l.push(VertexToEdgeNode::default());
-            l.push(VertexToEdgeNode::default());
-
-            e[i].insert_after(pinned.efree.prev());
-            l[i * 2 + 0].insert_after(pinned.lfree.prev());
-            l[i * 2 + 1].insert_after(pinned.lfree.prev());
-        }
-        for i in 0..maxt {
-            t.push(TriangleNode::default());
-            t[i].insert_after(pinned.tfree.prev());
-        }
+        data.sort_s(nv);
 
         // Initialize the initial edge. To do this, find boundbox by the set of points and make an
         // edge on its lower boundary with a margin */
         let mut bbox_min = [0.; 2];
         let mut bbox_max = [0.; 2];
-        bbox_min[0] = v[0].pos.x;
-        bbox_min[1] = v[0].pos.y;
-        bbox_max[0] = v[0].pos.x;
-        bbox_max[1] = v[0].pos.y;
+        bbox_min[0] = data.vertex(0).pos.x;
+        bbox_min[1] = data.vertex(0).pos.y;
+        bbox_max[0] = data.vertex(0).pos.x;
+        bbox_max[1] = data.vertex(0).pos.y;
         for i in 0..nv {
-            if v[i].pos.x < bbox_min[0] {
-                bbox_min[0] = v[i].pos.x;
+            if data.vertex(i).pos.x < bbox_min[0] {
+                bbox_min[0] = data.vertex(i).pos.x;
             }
-            if v[i].pos.x > bbox_max[0] {
-                bbox_max[0] = v[i].pos.x;
+            if data.vertex(i).pos.x > bbox_max[0] {
+                bbox_max[0] = data.vertex(i).pos.x;
             }
-            if v[i].pos.y < bbox_min[1] {
-                bbox_min[1] = v[i].pos.y;
+            if data.vertex(i).pos.y < bbox_min[1] {
+                bbox_min[1] = data.vertex(i).pos.y;
             }
-            if v[i].pos.y > bbox_max[1] {
-                bbox_max[1] = v[i].pos.y;
+            if data.vertex(i).pos.y > bbox_max[1] {
+                bbox_max[1] = data.vertex(i).pos.y;
             }
         }
-        pinned.vinit[0].pos.x = bbox_min[0] - (bbox_max[0] - bbox_min[0]) * 0.12;
-        pinned.vinit[0].pos.y = bbox_min[1] - (bbox_max[1] - bbox_min[1]) * 0.21;
-        pinned.vinit[1].pos.x = bbox_max[0] + (bbox_max[0] - bbox_min[0]) * 0.12;
-        pinned.vinit[1].pos.y = pinned.vinit[0].pos.y;
-        pinned.vinit[0].edges.init();
-        pinned.vinit[1].edges.init();
+        data.initial_vertex(0).pos.x = bbox_min[0] - (bbox_max[0] - bbox_min[0]) * 0.12;
+        data.initial_vertex(0).pos.y = bbox_min[1] - (bbox_max[1] - bbox_min[1]) * 0.21;
+        data.initial_vertex(1).pos.x = bbox_max[0] + (bbox_max[0] - bbox_min[0]) * 0.12;
+        data.initial_vertex(1).pos.y = data.initial_vertex(0).pos.y;
+        data.initial_vertex(0).edges.init();
+        data.initial_vertex(1).edges.init();
 
-        Self {
-            nv,
-            v: Pin::new(v),
-            _e: Pin::new(e),
-            _t: Pin::new(t),
-            _l: Pin::new(l),
-            s: Pin::new(s),
-            pinned,
-        }
+        Self { nv, data }
     }
 
     pub(crate) fn process(
@@ -474,8 +573,8 @@ impl Mesher {
             // Trying to deal with duplicate points
             let mut need_resorting = false;
             for i in 0..(self.nv - 1) {
-                let v1 = self.s[i];
-                let v2 = self.s[i + 1];
+                let v1 = *self.data.sorted_by_y_vertex(i);
+                let v2 = *self.data.sorted_by_y_vertex(i + 1);
                 let dx = (*v1).pos.x - (*v2).pos.x;
                 let dy = (*v1).pos.y - (*v2).pos.y;
                 if dx.abs() > EPSILON || dy.abs() > EPSILON {
@@ -510,25 +609,7 @@ impl Mesher {
             }
             // Sort the vertex array by y-coordinate
             if need_resorting {
-                self.s.sort_by(|a, b| {
-                    let v1 = (**a).pos;
-                    let v2 = (**b).pos;
-                    if v1.y == v2.y {
-                        if v1.x == v2.x {
-                            Ordering::Equal
-                        } else if v1.x > v2.x {
-                            Ordering::Greater
-                        } else {
-                            Ordering::Less
-                        }
-                    } else {
-                        if v1.y > v2.y {
-                            Ordering::Greater
-                        } else {
-                            Ordering::Less
-                        }
-                    }
-                });
+                self.data.sort_s(self.nv);
             }
 
             // Try to deal with loop kinks like this:
@@ -538,7 +619,7 @@ impl Mesher {
             //           |/               ________/
             //           C                A       C
             for i in 0..self.nv {
-                let a = &mut self.v[i] as *mut Vertex;
+                let a = self.data.vertex(i) as *mut Vertex;
                 let b = (*a).next_in_contour;
                 let c = (*b).next_in_contour;
                 let d = (*c).next_in_contour;
@@ -575,30 +656,33 @@ impl Mesher {
         let mut res: usize = 0;
         let mut cont2obj: [i16; 256] = [-1; 256];
         for i in 0..self.nv {
-            if self.v[i].contour >= 256 {
+            if self.data.vertex(i).contour >= 256 {
                 return Err(TriangulatorError::Fail);
             }
-            if self.v[i].is_hole {
+            if self.data.vertex(i).is_hole {
                 continue;
             }
-            let c = self.v[i].contour;
+            let c = self.data.vertex(i).contour;
             if cont2obj[c] == -1 {
                 cont2obj[c] = res as i16;
                 res += 1;
             }
         }
         for i in 0..self.nv {
-            if self.v[i].is_hole {
-                if self.v[i]
+            if self.data.vertex(i).is_hole {
+                if self
+                    .data
+                    .vertex(i)
                     .nested_to
                     .map(|nested_to| nested_to >= 256)
                     .unwrap_or(true)
                 {
                     return Err(TriangulatorError::Fail);
                 }
-                self.v[i].object = cont2obj[self.v[i].nested_to.unwrap()] as usize;
+                self.data.vertex(i).object =
+                    cont2obj[self.data.vertex(i).nested_to.unwrap()] as usize;
             } else {
-                self.v[i].object = cont2obj[self.v[i].contour] as usize;
+                self.data.vertex(i).object = cont2obj[self.data.vertex(i).contour] as usize;
             }
         }
         return Ok(res);
@@ -630,7 +714,7 @@ impl Mesher {
             // STEP 1: Non-convex triangulation
 
             // Initialization
-            let Some(curr) = self.create_edge(&self.pinned.vinit[0] as *const Vertex as *mut Vertex, &self.pinned.vinit[1] as *const Vertex as *mut Vertex) else { return Err(TriangulatorError::Fail) };
+            let Some(curr) = self.create_edge(self.data.initial_vertex(0) as *const Vertex as *mut Vertex, self.data.initial_vertex(1) as *const Vertex as *mut Vertex) else { return Err(TriangulatorError::Fail) };
             let mut curr = curr.as_ptr();
             let mut convx = EdgeNode::default();
             convx.init();
@@ -638,7 +722,7 @@ impl Mesher {
 
             // Cycle through all vertices of the selected contour
             for i in 0..self.nv {
-                let v = self.s[i];
+                let v = *self.data.sorted_by_y_vertex(i);
 
                 if (*v).object != object {
                     continue;
@@ -691,7 +775,7 @@ impl Mesher {
                 (*r).detach();
                 (*l).insert_after(curr);
                 (*r).insert_after(l);
-                self.pinned.eused.reattach(curr);
+                self.data.used_edges().reattach(curr);
 
                 // Register a triangle on all three edges
                 if self.create_triangle(l, r, curr).is_none() {
@@ -757,7 +841,7 @@ impl Mesher {
             while !convx.empty() {
                 let e = convx.next();
                 (*e).detach();
-                self.pinned.eused.attach(e);
+                self.data.used_edges().attach(e);
             }
 
             Ok(())
@@ -766,12 +850,12 @@ impl Mesher {
 
     fn create_edge(&mut self, v1: *mut Vertex, v2: *mut Vertex) -> Option<NonNull<EdgeNode>> {
         unsafe {
-            if self.pinned.efree.empty() || self.pinned.lfree.empty() {
+            if self.data.free_edges().empty() || self.data.free_vertex_to_edges().empty() {
                 return None;
             }
-            let res = self.pinned.efree.first();
+            let res = self.data.free_edges().first();
             (*res).detach();
-            self.pinned.eused.attach(res);
+            self.data.used_edges().attach(res);
             (*res).v1 = v1;
             (*res).v2 = v2;
             (*res).alt_cc[0] = Circumcircle::default();
@@ -790,10 +874,10 @@ impl Mesher {
         e: *mut EdgeNode,
     ) -> Option<NonNull<VertexToEdgeNode>> {
         unsafe {
-            if self.pinned.lfree.empty() {
+            if self.data.free_vertex_to_edges().empty() {
                 return None;
             }
-            let res = self.pinned.lfree.first();
+            let res = self.data.free_vertex_to_edges().first();
             (*res).detach();
             (*v).edges.attach(res);
             (*res).edge = e;
@@ -814,12 +898,12 @@ impl Mesher {
             {
                 return None;
             }
-            if self.pinned.tfree.empty() {
+            if self.data.free_triangles().empty() {
                 return None;
             }
-            let t = self.pinned.tfree.first();
+            let t = self.data.free_triangles().first();
             (*t).detach();
-            self.pinned.tused.attach(t);
+            self.data.used_triangles().attach(t);
             (*t).helper = -1;
             (*t).cc = Circumcircle::default();
             (*e1).tr[1] = (*e1).tr[0];
@@ -855,8 +939,8 @@ impl Mesher {
             let n = n.as_ptr();
             (*n).detach();
             (*n).insert_after(e2);
-            self.pinned.eused.reattach(e1);
-            self.pinned.eused.reattach(e2);
+            self.data.used_edges().reattach(e1);
+            self.data.used_edges().reattach(e2);
             if self.create_triangle(e1, e2, n).is_none() {
                 return None;
             }
@@ -890,8 +974,8 @@ impl Mesher {
             let Some(n) = self.create_edge((*e1).v1, (*e2).v2).map(|nn| nn.as_ptr()) else { return None };
             (*n).detach();
             (*n).insert_after(e2);
-            self.pinned.eused.reattach(e1);
-            self.pinned.eused.reattach(e2);
+            self.data.used_edges().reattach(e1);
+            self.data.used_edges().reattach(e2);
             if self.create_triangle(e1, e2, n).is_none() {
                 return None;
             }
@@ -902,8 +986,8 @@ impl Mesher {
     /// Attempt to optimize the entire graph
     fn optimize_all(&mut self, deep: i32, object: usize) -> Result<(), TriangulatorError> {
         unsafe {
-            let mut e = self.pinned.eused.next();
-            while e != &mut self.pinned.eused {
+            let mut e = self.data.used_edges().next();
+            while e != self.data.used_edges() {
                 let opt = e;
                 e = (*e).next();
                 if (*(*opt).v1).object != object {
@@ -1061,7 +1145,7 @@ impl Mesher {
                 self.free_edge((*t).edge[2]);
             }
             (*t).detach();
-            self.pinned.tfree.attach(t);
+            self.data.free_triangles().attach(t);
         }
     }
 
@@ -1074,7 +1158,7 @@ impl Mesher {
             while l != &mut (*(*e).v1).edges {
                 if (*l).edge == e {
                     (*l).detach();
-                    self.pinned.lfree.attach(l);
+                    self.data.free_vertex_to_edges().attach(l);
                     break;
                 }
                 l = (*l).next();
@@ -1083,13 +1167,13 @@ impl Mesher {
             while l != &mut (*(*e).v2).edges {
                 if (*l).edge == e {
                     (*l).detach();
-                    self.pinned.lfree.attach(l);
+                    self.data.free_vertex_to_edges().attach(l);
                     break;
                 }
                 l = (*l).next();
             }
             (*e).detach();
-            self.pinned.efree.attach(e);
+            self.data.free_edges().attach(e);
             return true;
         }
     }
@@ -1107,15 +1191,17 @@ impl Mesher {
     /// Function for successive insertion of structural segments
     fn handle_constraints(&mut self, object: usize) -> Result<(), TriangulatorError> {
         for i in 0..self.nv {
-            if self.v[i].object != object {
+            if self.data.vertex(i).object != object {
                 continue;
             }
-            if find_edge(&mut self.v[i], self.v[i].prev_in_contour) != std::ptr::null_mut() {
+            if find_edge(self.data.vertex(i), self.data.vertex(i).prev_in_contour)
+                != std::ptr::null_mut()
+            {
                 continue;
             }
             self.insert_fixed_edge(
-                &self.v[i] as *const Vertex as *mut Vertex,
-                self.v[i].prev_in_contour,
+                self.data.vertex(i) as *const Vertex as *mut Vertex,
+                self.data.vertex(i).prev_in_contour,
             )?;
         }
         Ok(())
@@ -1273,7 +1359,7 @@ impl Mesher {
     ) -> Result<(), TriangulatorError> {
         unsafe {
             if (*cntr).next() == cntr {
-                self.pinned.eused.reattach(cntr);
+                self.data.used_edges().reattach(cntr);
                 return Ok(());
             }
 
@@ -1281,8 +1367,8 @@ impl Mesher {
             if (*(*cntr).next()).next() == cntr {
                 let Some(t) = self.create_triangle(cntr, (*cntr).next(), base).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
                 // And let's return the mesher's edges from the outline
-                self.pinned.eused.reattach((*t).edge[0]);
-                self.pinned.eused.reattach((*t).edge[1]);
+                self.data.used_edges().reattach((*t).edge[0]);
+                self.data.used_edges().reattach((*t).edge[1]);
                 return Ok(());
             }
 
@@ -1449,8 +1535,8 @@ impl Mesher {
             root.init();
 
             // Add the first triangle with a negative sign (helper=0)
-            let l = self.pinned.vinit[0].edges.next();
-            if l == &mut self.pinned.vinit[0].edges {
+            let l = self.data.initial_vertex(0).edges.next();
+            if l == &mut self.data.initial_vertex(0).edges {
                 return Err(TriangulatorError::Fail);
             }
             if (*(*l).edge).tr[0] == std::ptr::null_mut() {
@@ -1488,7 +1574,7 @@ impl Mesher {
                 if (*tmp).helper == 0 {
                     self.free_triangle(tmp, true);
                 } else {
-                    self.pinned.tused.reattach(tmp);
+                    self.data.used_triangles().reattach(tmp);
                 }
             }
 
@@ -1502,10 +1588,10 @@ impl Mesher {
         let mut triangles = vec![];
 
         for i in 0..self.nv {
-            vert.push(self.v[i].pos);
+            vert.push(self.data.vertex(i).pos);
         }
-        let mut t = self.pinned.tused.next();
-        while t != &self.pinned.tused as *const TriangleNode as *mut TriangleNode {
+        let mut t = self.data.used_triangles().next();
+        while t != self.data.used_triangles() as *const TriangleNode as *mut TriangleNode {
             unsafe {
                 if (*(*t).edge[1]).is_contour_edge() {
                     swap(&mut (*t).edge[0], &mut (*t).edge[1])
