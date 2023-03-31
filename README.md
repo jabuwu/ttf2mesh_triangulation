@@ -2,8 +2,6 @@
 
 Triangulation code ripped from [ttf2mesh](https://github.com/fetisov/ttf2mesh) and ported to Rust.
 
-Provides fixes for the original ttf2mesh algorithm, or produces the same exact results if using the `original_algorithm` feature.
-
 ## Example
 
 ```rust
@@ -49,7 +47,7 @@ A test included in this repo checks byte-for-byte equality with ttf2mesh. It che
 cd test_gen
 git clone https://github.com/fetisov/ttf2mesh.git
 cd ttf2mesh
-git checkout 6caa474b3f0567db6d3a35997b96c27fd87ba439
+git checkout c1ad5e5152174f692fe9cb124a957431165e3b46
 cd ..
 mkdir build
 cd build
@@ -57,5 +55,5 @@ cmake .. -DCMAKE_BUILD_TYPE=RELEASE
 make
 ./ttf2mesh_test_data_gen
 cd ../..
-cargo test --release --features original_algorithm
+cargo test --release
 ```

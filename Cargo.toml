@@ -13,4 +13,3 @@ ttf-parser = "0.18"
 
 [features]
 default = []
-original_algorithm = []

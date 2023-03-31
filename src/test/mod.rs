@@ -1,4 +1,3 @@
-#[cfg(feature = "original_algorithm")]
 #[test]
 fn test_data() {
     use std::{

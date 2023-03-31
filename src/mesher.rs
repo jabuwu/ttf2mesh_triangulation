@@ -195,24 +195,13 @@ impl Default for Circumcircle {
 
 impl Circumcircle {
     // Checks if the combined radius of (a1, a2) is larger than (b1, b2).
-    //
-    // The original algorithm adds `EPISILON` and does a `>` check, which can cause the algorithm to
-    // ping-pong between two candidates, and perform unnecessary work. The new algorithm checks for
-    // exact equality, which removes this ping-pong.
     fn bigger_combined_radius(
         a1: &Circumcircle,
         a2: &Circumcircle,
         b1: &Circumcircle,
         b2: &Circumcircle,
     ) -> bool {
-        #[cfg(feature = "original_algorithm")]
-        {
-            a1.radius + a2.radius + EPSILON > b1.radius + b2.radius
-        }
-        #[cfg(not(feature = "original_algorithm"))]
-        {
-            a1.radius + a2.radius >= b1.radius + b2.radius
-        }
+        a1.radius + a2.radius >= b1.radius + b2.radius
     }
 
     fn calculate(&mut self, aa: Vec2, bb: Vec2, cc: Vec2) -> bool {
