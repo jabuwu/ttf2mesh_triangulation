@@ -395,9 +395,9 @@ mod data {
             Vec::leak(s_vec);
         }
 
-        pub(super) fn initial_vertex(&self, n: usize) -> &mut Vertex {
+        pub(super) fn initial_vertex(&mut self, n: usize) -> *mut Vertex {
             assert!(n < 2);
-            unsafe { &mut *(&self.initial_vertices[n] as *const Vertex as *mut Vertex) }
+            &mut self.initial_vertices[n] as *mut Vertex
         }
     }
 }
@@ -405,7 +405,7 @@ mod data {
 impl Mesher {
     pub(crate) fn new(o: &Triangulator) -> Self {
         // Allocate memory and initialize fields
-        let data = data::MesherData::new(o.total_points);
+        let mut data = data::MesherData::new(o.total_points);
 
         // Filling in the vertices according to outline points
         let mut v_len = 0;
@@ -479,12 +479,14 @@ impl Mesher {
                 bbox_max[1] = data.vertex(i).pos.y;
             }
         }
-        data.initial_vertex(0).pos.x = bbox_min[0] - (bbox_max[0] - bbox_min[0]) * 0.12;
-        data.initial_vertex(0).pos.y = bbox_min[1] - (bbox_max[1] - bbox_min[1]) * 0.21;
-        data.initial_vertex(1).pos.x = bbox_max[0] + (bbox_max[0] - bbox_min[0]) * 0.12;
-        data.initial_vertex(1).pos.y = data.initial_vertex(0).pos.y;
-        data.initial_vertex(0).edges.init();
-        data.initial_vertex(1).edges.init();
+        unsafe {
+            (*data.initial_vertex(0)).pos.x = bbox_min[0] - (bbox_max[0] - bbox_min[0]) * 0.12;
+            (*data.initial_vertex(0)).pos.y = bbox_min[1] - (bbox_max[1] - bbox_min[1]) * 0.21;
+            (*data.initial_vertex(1)).pos.x = bbox_max[0] + (bbox_max[0] - bbox_min[0]) * 0.12;
+            (*data.initial_vertex(1)).pos.y = (*data.initial_vertex(0)).pos.y;
+            (*data.initial_vertex(0)).edges.init();
+            (*data.initial_vertex(1)).edges.init();
+        }
 
         Self { nv, data }
     }
@@ -676,7 +678,11 @@ impl Mesher {
             // STEP 1: Non-convex triangulation
 
             // Initialization
-            let Some(curr) = self.create_edge(self.data.initial_vertex(0) as *const Vertex as *mut Vertex, self.data.initial_vertex(1) as *const Vertex as *mut Vertex) else { return Err(TriangulatorError::Fail) };
+            let v0 = self.data.initial_vertex(0);
+            let v1 = self.data.initial_vertex(1);
+            let Some(curr) = self.create_edge(v0, v1) else {
+                return Err(TriangulatorError::Fail);
+            };
             let mut curr = curr.as_ptr();
             let mut convx = EdgeNode::default();
             convx.init();
@@ -726,8 +732,12 @@ impl Mesher {
                 }
 
                 // Create two new edges (to the left and right of the current point)
-                let Some(l) = self.create_edge((*curr).v1, v) else { return Err(TriangulatorError::Fail) };
-                let Some(r) = self.create_edge(v, (*curr).v2) else { return Err(TriangulatorError::Fail) };
+                let Some(l) = self.create_edge((*curr).v1, v) else {
+                    return Err(TriangulatorError::Fail);
+                };
+                let Some(r) = self.create_edge(v, (*curr).v2) else {
+                    return Err(TriangulatorError::Fail);
+                };
                 let mut l = l.as_ptr();
                 let mut r = r.as_ptr();
 
@@ -746,14 +756,18 @@ impl Mesher {
 
                 // If the edge is vertical, make sure it is covered
                 if ((*(*l).v1).pos.x - (*(*l).v2).pos.x).abs() <= EPSILON {
-                    let Some(ll) = self.make_convex((*l).prev(), l, l).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+                    let Some(ll) = self.make_convex((*l).prev(), l, l).map(|nn| nn.as_ptr()) else {
+                        return Err(TriangulatorError::Fail);
+                    };
                     l = ll;
                     if l == std::ptr::null_mut() {
                         return Err(TriangulatorError::Fail);
                     }
                 }
                 if ((*(*r).v1).pos.x - (*(*r).v2).pos.x).abs() <= EPSILON {
-                    let Some(rr) = self.make_convex(r, (*r).next(), r).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+                    let Some(rr) = self.make_convex(r, (*r).next(), r).map(|nn| nn.as_ptr()) else {
+                        return Err(TriangulatorError::Fail);
+                    };
                     r = rr;
                     if r == std::ptr::null_mut() {
                         return Err(TriangulatorError::Fail);
@@ -761,7 +775,10 @@ impl Mesher {
                 }
 
                 while (*l).prev() != &mut convx as *mut EdgeNode {
-                    let Some(tmp) = self.make_convex90((*l).prev(), l, l).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+                    let Some(tmp) = self.make_convex90((*l).prev(), l, l).map(|nn| nn.as_ptr())
+                    else {
+                        return Err(TriangulatorError::Fail);
+                    };
                     if tmp == l {
                         break;
                     }
@@ -769,7 +786,10 @@ impl Mesher {
                 }
 
                 while (*r).next() != &mut convx as *mut EdgeNode {
-                    let Some(tmp) = self.make_convex90(r, (*r).next(), r).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+                    let Some(tmp) = self.make_convex90(r, (*r).next(), r).map(|nn| nn.as_ptr())
+                    else {
+                        return Err(TriangulatorError::Fail);
+                    };
                     if tmp == r {
                         break;
                     }
@@ -791,7 +811,9 @@ impl Mesher {
                 let mut e1 = convx.next();
                 let mut e2 = (*e1).next();
                 while e1 != &mut convx as *mut EdgeNode && e2 != &mut convx as *mut EdgeNode {
-                    let Some(e1_) = self.make_convex(e1, e2, e2).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+                    let Some(e1_) = self.make_convex(e1, e2, e2).map(|nn| nn.as_ptr()) else {
+                        return Err(TriangulatorError::Fail);
+                    };
                     e1 = e1_;
                     if e1 != e2 {
                         done = true;
@@ -899,7 +921,9 @@ impl Mesher {
             return Some(NonNull::new(ret_default).unwrap());
         }
 
-        let Some(n) = self.create_edge((*e1).v1, (*e2).v2) else { return None };
+        let Some(n) = self.create_edge((*e1).v1, (*e2).v2) else {
+            return None;
+        };
         let n = unsafe { &mut *n.as_ptr() };
         n.detach();
         n.insert_after(e2);
@@ -936,7 +960,9 @@ impl Mesher {
             return Some(NonNull::new(ret_default).unwrap());
         }
 
-        let Some(n) = self.create_edge((*e1).v1, (*e2).v2).map(|nn| nn.as_ptr()) else { return None };
+        let Some(n) = self.create_edge((*e1).v1, (*e2).v2).map(|nn| nn.as_ptr()) else {
+            return None;
+        };
         let n = unsafe { &mut *n };
         (*n).detach();
         (*n).insert_after(e2);
@@ -1059,9 +1085,13 @@ impl Mesher {
         self.free_triangle(t0, false);
         self.free_triangle(t1, false);
         self.change_edge(e, aa, bb);
-        let Some(t0_) = self.create_triangle(a, c, e).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+        let Some(t0_) = self.create_triangle(a, c, e).map(|nn| nn.as_ptr()) else {
+            return Err(TriangulatorError::Fail);
+        };
         t0 = unsafe { &mut *t0_ };
-        let Some(t1_) = self.create_triangle(b, d, e).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+        let Some(t1_) = self.create_triangle(b, d, e).map(|nn| nn.as_ptr()) else {
+            return Err(TriangulatorError::Fail);
+        };
         t1 = unsafe { &mut *t1_ };
 
         // Restoring fields after recreating
@@ -1287,7 +1317,9 @@ impl Mesher {
             }
 
             // Create an insertion edge
-            let Some(ins) = self.create_edge(v1, v2).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+            let Some(ins) = self.create_edge(v1, v2).map(|nn| nn.as_ptr()) else {
+                return Err(TriangulatorError::Fail);
+            };
 
             // We triangulate the resulting hole after deletion with the recursive algorithm. In the
             // process, it will return all edges of lists cntr1 and cntr2 back to the mesher (to the
@@ -1324,7 +1356,12 @@ impl Mesher {
 
             // If the contour has only 2 faces, then form a triangle
             if (*(*cntr).next()).next() == cntr {
-                let Some(t) = self.create_triangle(cntr, (*cntr).next(), base).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+                let Some(t) = self
+                    .create_triangle(cntr, (*cntr).next(), base)
+                    .map(|nn| nn.as_ptr())
+                else {
+                    return Err(TriangulatorError::Fail);
+                };
                 // And let's return the mesher's edges from the outline
                 self.data.used_edges.reattach((*t).edge[0]);
                 self.data.used_edges.reattach((*t).edge[1]);
@@ -1369,18 +1406,30 @@ impl Mesher {
             // Form a triangle on the base edge and the found point
             let mut l = find_edge((*base).v1, closest_vert);
             if l == std::ptr::null_mut() {
-                let Some(l_) = self.create_edge((*base).v1, closest_vert).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+                let Some(l_) = self
+                    .create_edge((*base).v1, closest_vert)
+                    .map(|nn| nn.as_ptr())
+                else {
+                    return Err(TriangulatorError::Fail);
+                };
                 l = l_;
             }
             let mut r = find_edge(closest_vert, (*base).v2);
             if r == std::ptr::null_mut() {
-                let Some(r_) = self.create_edge(closest_vert, (*base).v2).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+                let Some(r_) = self
+                    .create_edge(closest_vert, (*base).v2)
+                    .map(|nn| nn.as_ptr())
+                else {
+                    return Err(TriangulatorError::Fail);
+                };
                 r = r_;
             }
             if l == std::ptr::null_mut() || r == std::ptr::null_mut() {
                 return Err(TriangulatorError::Fail);
             }
-            let Some(_t) = self.create_triangle(base, l, r).map(|nn| nn.as_ptr()) else { return Err(TriangulatorError::Fail) };
+            let Some(_t) = self.create_triangle(base, l, r).map(|nn| nn.as_ptr()) else {
+                return Err(TriangulatorError::Fail);
+            };
 
             // Start the function recursively with the base edge L and R
             // First open the contour by forming 2 other contours
@@ -1494,8 +1543,8 @@ impl Mesher {
             root.init();
 
             // Add the first triangle with a negative sign (helper=0)
-            let l = self.data.initial_vertex(0).edges.next();
-            if l == &mut self.data.initial_vertex(0).edges {
+            let l = (*self.data.initial_vertex(0)).edges.next();
+            if l == &mut (*self.data.initial_vertex(0)).edges {
                 return Err(TriangulatorError::Fail);
             }
             if (*(*l).edge).tr[0] == std::ptr::null_mut() {
