@@ -1,9 +1,12 @@
 use std::{
+    alloc::{dealloc, Layout},
     cmp::Ordering,
-    mem::swap,
+    mem::{forget, swap},
     pin::Pin,
     ptr::{self, NonNull},
 };
+
+use data::MesherData;
 
 use crate::{linked_list::LinkedListNode, vec2::Vec2, Triangulator, TriangulatorError, EPSILON};
 
@@ -270,17 +273,17 @@ mod data {
     /// ttf2mesh library which does the same thing.
     pub(super) struct MesherData {
         /// Length of maxv
-        max_vertices: usize,
+        pub(super) max_vertices: usize,
         /// Vertex pool, length of maxv
-        vertex_pool: *mut Vertex,
+        pub(super) vertex_pool: *mut Vertex,
         /// Edge pool, length of maxe
-        edge_pool: *mut EdgeNode,
+        pub(super) edge_pool: *mut EdgeNode,
         /// Triangle pool, length of maxt
-        triangle_pool: *mut TriangleNode,
+        pub(super) triangle_pool: *mut TriangleNode,
         /// Vertex->edge pool, length of (2 * maxe)
-        vertex_to_edge_pool: *mut VertexToEdgeNode,
+        pub(super) vertex_to_edge_pool: *mut VertexToEdgeNode,
         /// Sorted by (y) array of vertices
-        sorted_by_y_vertices: *mut *mut Vertex,
+        pub(super) sorted_by_y_vertices: *mut *mut Vertex,
         /// Root of the list of free edges
         pub(super) free_edges: EdgeNode,
         /// Root of the list of edges used
@@ -292,7 +295,7 @@ mod data {
         /// Root of free reference list vertex->edge
         pub(super) free_vertex_to_edges: VertexToEdgeNode,
         /// Two initialisation points along the lower edge of the glyph
-        initial_vertices: [Vertex; 2],
+        pub(super) initial_vertices: [Vertex; 2],
     }
 
     impl MesherData {
@@ -1620,6 +1623,56 @@ impl Mesher {
         }
 
         triangles
+    }
+}
+
+impl Drop for Mesher {
+    fn drop(&mut self) {
+        let mut data = std::mem::replace(
+            &mut self.data,
+            Box::pin(data::MesherData {
+                max_vertices: 0,
+                vertex_pool: std::ptr::null_mut(),
+                edge_pool: std::ptr::null_mut(),
+                triangle_pool: std::ptr::null_mut(),
+                vertex_to_edge_pool: std::ptr::null_mut(),
+                sorted_by_y_vertices: std::ptr::null_mut(),
+                free_edges: EdgeNode::default(),
+                used_edges: EdgeNode::default(),
+                free_triangles: TriangleNode::default(),
+                used_triangles: TriangleNode::default(),
+                free_vertex_to_edges: VertexToEdgeNode::default(),
+                initial_vertices: [Vertex::default(), Vertex::default()],
+            }),
+        );
+
+        let maxv = data.max_vertices;
+        let maxt = ((maxv + 2) - 3) * 2 + 1;
+        let maxe = maxt * 2 + 1;
+        let maxv2e = maxe * 2;
+
+        let layout = Layout::new::<MesherData>();
+        let (layout, _) = layout
+            .extend(Layout::array::<Vertex>(maxv).unwrap())
+            .unwrap();
+        let (layout, _) = layout
+            .extend(Layout::array::<EdgeNode>(maxe).unwrap())
+            .unwrap();
+        let (layout, _) = layout
+            .extend(Layout::array::<TriangleNode>(maxt).unwrap())
+            .unwrap();
+        let (layout, _) = layout
+            .extend(Layout::array::<VertexToEdgeNode>(maxv2e).unwrap())
+            .unwrap();
+        let (layout, _) = layout
+            .extend(Layout::array::<*mut Vertex>(maxv).unwrap())
+            .unwrap();
+
+        unsafe {
+            dealloc(&mut *data as *mut _ as *mut u8, layout);
+        }
+
+        forget(data);
     }
 }
 
